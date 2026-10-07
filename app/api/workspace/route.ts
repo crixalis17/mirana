@@ -1,0 +1,2 @@
+import {readWorkspace} from '@/lib/store';import {user,googleReady,emailReady} from '@/lib/auth';
+export async function GET(request:Request){try{const u=await user(request);if(!u)return Response.json({error:'Please sign in.',googleReady:googleReady(),emailReady:emailReady()},{status:401});return Response.json({...await readWorkspace(u.id),user:u,googleReady:googleReady(),emailReady:emailReady()},{headers:{'Cache-Control':'no-store'}})}catch{return Response.json({error:'Could not load your workspace. Please retry.'},{status:503})}}

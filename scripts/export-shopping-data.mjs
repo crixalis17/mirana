@@ -1,0 +1,23 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import {argumentsMap} from './db-cli.mjs';
+const args=argumentsMap();
+if(!args.input||!args.output)throw new Error('Usage: node scripts/export-shopping-data.mjs --input PRIVATE_WORKSPACE_JSON --output PRIVATE_ARCHIVE_JSON [--source-user GOOGLE_SUB_OR_private-owner]');
+const source=JSON.parse(readFileSync(args.input,'utf8'));
+const rows=source.purchases||source.queue;
+if(!Array.isArray(rows))throw new Error('Input must contain a purchases or queue array from a private workspace export.');
+const owner=args['source-user'];
+if(!owner&&rows.some(p=>p.userId||p.user_id))throw new Error('Select --source-user explicitly for multi-owner input.');
+const selected=rows.filter(p=>!owner||!(p.userId||p.user_id)||(p.userId||p.user_id)===owner);
+const ids=new Set(selected.map(p=>p.id));
+const purchases=selected.map(p=>{
+  const brief=typeof p.brief==='string'?JSON.parse(p.brief):p.brief||p;
+  const report=typeof p.report==='string'?JSON.parse(p.report):p.report||null;
+  const clean={...brief};delete clean.userId;delete clean.user_id;delete clean.report;delete clean.status;delete clean.updatedAt;delete clean.updated_at;
+  clean.alerts={...clean.alerts,enabled:false};delete clean.retryAt;delete clean.researchError;
+  return {id:p.id,brief:clean,report,status:'paused'};
+});
+let settings=source.settings||{};if(typeof settings==='string')settings=JSON.parse(settings);
+const observations=(source.observations||[]).map(o=>o.payload?{...JSON.parse(o.payload),purchaseId:o.purchase_id}:o).filter(o=>ids.has(o.purchaseId));
+const archive={version:1,createdAt:new Date().toISOString(),profile:settings.profile||null,purchases,observations};
+writeFileSync(args.output,JSON.stringify(archive,null,2)+'\n',{mode:0o600,flag:'wx'});
+console.log(`Exported ${purchases.length} paused shopping items. Keep both JSON files private.`);
