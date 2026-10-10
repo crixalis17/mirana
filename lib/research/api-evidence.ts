@@ -1,3 +1,4 @@
+import {customerReviewIdentity} from './customer-reviews';
 import {createHash} from 'node:crypto';
 import {allowedProductUrl,type ProductObservation} from './product-tools';
 import {SOURCE_READER_LIMITS,type ReadSource} from './source-reader';
@@ -54,7 +55,7 @@ export function mergeSourceSnapshots(pages:ReadSource[],apiSources:ReadSource[],
     const key=`${url}|${representation}`,existing=chosen.get(key);
     if(!existing||rank(source)>rank(existing)||rank(source)===rank(existing)&&Date.parse(source.retrievedAt)>=Date.parse(existing.retrievedAt))chosen.set(key,source);
   }
-  const selected=[...chosen.values()].sort((a,b)=>rank(b)-rank(a)).slice(0,maxSources);
+  const selected=[...chosen.values()].sort((a,b)=>Number(rank(b)>0)-Number(rank(a)>0)||Number(!!customerReviewIdentity(b.url))-Number(!!customerReviewIdentity(a.url))||rank(b)-rank(a)).slice(0,maxSources);
   const readableCount=selected.filter(source=>source.bodyText).length;
   const share=Math.floor(SOURCE_READER_LIMITS.maxRoundTextChars/Math.max(1,readableCount));
   return selected.map(source=>{

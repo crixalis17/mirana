@@ -1,3 +1,4 @@
+import {customerReviewUrl,customerReviewIdentity} from './customer-reviews';
 import {executeWebTool,webToolsConfigured,type WebToolName} from './web-tools';
 import {executeProductTool,productToolsConfigured,allowedProductUrl,type ProductToolName} from './product-tools';
 import {readSourcePage,sourcePageKind,type ReadSource} from './source-reader';
@@ -123,6 +124,23 @@ export async function retrieveResearchEvidence(request:ProviderRequest,signal:Ab
   // Fixed coverage: retail/official discovery and independent/owner evidence have
   // separate operations. Avoid one long multi-retailer query losing its intent.
   const gaps=Array.isArray(request.input.gaps)?request.input.gaps.join(' '):'';
+  const reviewLeads=()=>[...leads.values()].filter(lead=>exactRetailUrl(lead.url)&&!clearVariantMismatch(lead,brief));
+  async function customerReviews(candidates:Lead[]){
+    // Alternate merchants, then complete a primary pass before fallbacks. A
+    // blocked Amazon page must not consume Flipkart's review allowance.
+    const amazon=candidates.filter(lead=>new URL(lead.url).hostname.endsWith('amazon.in'));
+    const flipkart=candidates.filter(lead=>new URL(lead.url).hostname.endsWith('flipkart.com'));
+    const ordered=[amazon[0],flipkart[0],amazon[1],flipkart[1]].filter((lead):lead is Lead=>!!lead);
+    const failed:string[]=[];
+    for(const lead of ordered){const url=customerReviewUrl(lead.url);if(!url||calls>=maximum||diagnostics.originalSources.some(source=>source.url===url&&source.accessStatus==='read'))continue;
+      const tool=web.firecrawl.ready?'read_source_firecrawl':web.tavily.ready?'read_source_tavily':null;
+      if(!tool)continue;
+      const page=(await webCall(tool,{url}))?.source;
+      if(!page&&tool==='read_source_firecrawl')failed.push(url);
+    }
+    for(const url of failed)if(web.tavily.ready&&calls<maximum)await webCall('read_source_tavily',{url});
+  }
+  if(followup)await customerReviews(reviewLeads());
   const queryPlan=followup?queries.filter(query=>query.scope==='review'?/review|hands.on|measured|independent/i.test(gaps):query.scope==='owner'?/owner|feedback/i.test(gaps):query.scope==='flipkart'?/flipkart/i.test(gaps):query.scope==='amazon'?/price|variant|availability|cost/i.test(gaps):false):queries;
   for(const query of queryPlan){
     const primary=query.scope==='review'||query.scope==='owner'?'tavily':'firecrawl';
@@ -170,6 +188,11 @@ export async function retrieveResearchEvidence(request:ProviderRequest,signal:Ab
     if(new URL(lead.url).hostname.endsWith('amazon.in')?product.brightdataAmazon:product.brightdataFlipkart)
       await productCall('fetch_product_listing',{url:lead.url});}
   for(const kind of ['review','owner'])for(const lead of select(kind,1))await extract(lead);
+  if(!followup)await customerReviews(chosen);
+  for(const retailer of ['amazon','flipkart'] as const){
+    if(!diagnostics.originalSources.some(source=>customerReviewIdentity(source.url)?.retailer===retailer&&source.accessStatus==='read'))
+      diagnostics.limitations.push(`${retailer} customer-review text is missing or blocked; review-first ranking remains uncertain.`);
+  }
   if(product.keepa&&calls<maximum){
     const asin=chosen.map(lead=>lead.url.match(/\/dp\/([A-Z0-9]{10})/)?.[1]).find(Boolean);
     if(asin)await productCall('amazon_price_history',{asin,days:90});
@@ -178,7 +201,8 @@ export async function retrieveResearchEvidence(request:ProviderRequest,signal:Ab
     diagnostics.limitations.push(`Missing readable ${kind} evidence after controlled retrieval.`);
   if(!chosen.length)diagnostics.limitations.push('No exact Amazon India or Flipkart product listing resolved; discovery is incomplete.');
   if(diagnostics.budgetExhausted)diagnostics.limitations.push('Retrieval operation allowance reached; remaining gaps are explicit.');
-  const sources:GroundedSource[]=[...leads.values()].slice(0,40);
+  diagnostics.originalSources.sort((a,b)=>Number(!!customerReviewIdentity(b.url))-Number(!!customerReviewIdentity(a.url)));
+  const sources:GroundedSource[]=[...leads.values()].sort((a,b)=>Number(!!customerReviewIdentity(b.url))-Number(!!customerReviewIdentity(a.url))).slice(0,40);
   if(!sources.length){
     if(env.RESEARCH_NATIVE_SEARCH_ENABLED==='true'&&!diagnostics.budgetExhausted){
       // Only reached after all configured discovery operations have been attempted

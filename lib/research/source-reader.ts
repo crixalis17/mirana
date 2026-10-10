@@ -1,3 +1,4 @@
+import {customerReviewIdentity} from './customer-reviews';
 import {createHash} from 'node:crypto';
 import {canFetchListing, sourceKey} from '../research';
 
@@ -63,7 +64,7 @@ function readableJson(value:unknown) {
   function walk(node:unknown,depth=0){if(visited++>=200||depth>10)return;if(typeof node==='string'){strings.push(node);return;}if(Array.isArray(node)){for(const child of node.slice(0,40))walk(child,depth+1);return;}if(node&&typeof node==='object')for(const [key,child]of Object.entries(node).slice(0,40)){if(['title','headline','name'].includes(key)&&!title&&typeof child==='string')title=normalize(child).slice(0,500);if(key==='datePublished')publishedAt=publishedAt||publishedDate(child);if(!['script','style','html','url','@context','@type'].includes(key))walk(child,depth+1);}}
   walk(value);return {title,publishedAt,text:normalize(strings.join('\n\n'))};
 }
-export function sourcePageKind(url:string):SourceKind {const key=sourceKey(url);if(!key)return 'unknown';const host=new URL(key).hostname;if(reviews.has(host))return 'review';if(owners.has(host))return 'owner';if(canFetchListing(key))return retailers.has(host)?'retailer':'official';return 'unknown';}
+export function sourcePageKind(url:string):SourceKind {const key=sourceKey(url);if(!key)return 'unknown';const host=new URL(key).hostname;if(customerReviewIdentity(key))return 'owner';if(reviews.has(host))return 'review';if(owners.has(host))return 'owner';if(canFetchListing(key))return retailers.has(host)?'retailer':'official';return 'unknown';}
 // Only registered literal page-reading adapters may enter the quote ledger.
 // The adapter validates the full provider response before recording its hash;
 // this guard independently checks the persisted bounded snapshot and attribution.
