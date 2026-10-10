@@ -85,9 +85,11 @@ export function researchJobDTO(job: ResearchJob) {
   const batches=[job.outputs?.gather,...(job.outputs?.followup||[])].filter(Boolean);
   const sourceCount=new Set(batches.flatMap(batch=>(batch.sources||[]).map((source:RecordValue)=>source.url)).filter((url:unknown)=>typeof url==='string'&&url.startsWith('https://'))).size;
   const gaps=publicStrings(job.outputs?.assess?.gaps);
-  const originals=new Map<string,{accessStatus:string;bodyText?:string}>();
+  const originals=new Map<string,{accessStatus:string;bodyText?:string;textTrust?:string}>();
   for(const batch of (job.outputs?.read||[]))for(const source of (batch.sources||[]))originals.set(source.url,source);
-  const readCount=[...originals.values()].filter(source=>source.accessStatus==='read'&&source.bodyText).length;
+  const readCount=[...originals.values()].filter(source=>source.accessStatus==='read'&&source.bodyText&&source.textTrust==='untrusted-original-page').length;
+  const providerReadCount=[...originals.values()].filter(source=>source.accessStatus==='read'&&source.bodyText&&['untrusted-provider-api-json','untrusted-provider-page'].includes(source.textTrust||'')).length;
+  const blockedCount=[...originals.values()].filter(source=>source.accessStatus!=='read').length;
   const toolNames=new Set(['search_products_india','fetch_product_listing','amazon_price_history','search_web_tavily','read_source_tavily','search_web_firecrawl','read_source_firecrawl','read_source_page','search_web_mcp','read_source_mcp','google_search']);
   const providers=new Set(['product-api','web-api','original-page','serpapi-mcp','brightdata-mcp','tavily','firecrawl','google']);
   const toolCalls=batches.flatMap(batch=>batch.toolCalls||[]).slice(0,36).filter((call:RecordValue)=>toolNames.has(String(call.tool))&&providers.has(String(call.provider))).map((call:RecordValue)=>({
@@ -98,7 +100,7 @@ export function researchJobDTO(job: ResearchJob) {
     limits:{maxCalls:job.limits.maxCalls,maxToolCalls:job.limits.maxToolCalls,maxRounds:job.limits.maxRounds,attemptedCalls:job.attemptedCalls,attemptedToolCalls:job.attemptedToolCalls},
     events:job.events.slice(-40),plan:{criteria:publicStrings(plan.criteria),hardRequirements:publicStrings(plan.hardRequirements),softPreferences:publicStrings(plan.softPreferences),questions:publicStrings(plan.questions)},
     completedSteps:Object.keys(job.outputs).filter(key=>stages.includes(key as ResearchStage)),
-    coverage:{sourceCount,readCount,blockedCount:originals.size-readCount,gapCount:gaps.length,gaps,toolCalls}};
+    coverage:{sourceCount,readCount,providerReadCount,blockedCount,gapCount:gaps.length,gaps,toolCalls}};
 }
 export async function ensureResearchJob(purchaseId: string,userId: string) {
   return transaction(async tx=>{
@@ -199,8 +201,15 @@ export async function completeResearchStep(jobId: string,token: string,stage: Re
   });
 }
 export async function finishResearchJob(jobId: string,token: string) {return mutate(jobId,token,(_tx,job)=>{if(job.stage!=='publish')throw new Error('Research is not ready to publish.');job.status='completed';job.token=null;job.leaseExpires=0;job.safeError=null;job.events.push(event('publish','Research complete.'));});}
-export async function failResearchJob(jobId: string,token: string,safeMessage: string,options: {retryAt?:string;retryable?:boolean}={}) {
-  return mutate(jobId,token,(_tx,job)=>{if(options.retryAt&&!Number.isFinite(Date.parse(options.retryAt)))throw new Error('Invalid retry time.');job.status=options.retryable?'retry_pending':'failed';job.retryAt=options.retryable?(options.retryAt||new Date(Date.now()+60000).toISOString()):null;job.safeError='Research could not finish. You can retry from the last saved step.';job.token=null;job.leaseExpires=0;job.events.push(event(job.stage,job.safeError));void safeMessage;});
+export async function failResearchJob(jobId: string,token: string,safeMessage: string,options: {retryAt?:string;retryable?:boolean;errorCode?:string}={}) {
+  return mutate(jobId,token,(_tx,job)=>{
+    if(options.retryAt&&!Number.isFinite(Date.parse(options.retryAt)))throw new Error('Invalid retry time.');
+    const exhausted=job.attemptedCalls>=job.limits.maxCalls,retryable=options.retryable===true&&!exhausted;
+    job.status=retryable?'retry_pending':'failed';job.retryAt=retryable?(options.retryAt||new Date(Date.now()+60000).toISOString()):null;
+    const messages:Record<string,string>={RATE_LIMIT:'Google rate-limited the research request.',INCOMPLETE_OUTPUT:'The research response ended before its assessment was complete.',PROVIDER_UNAVAILABLE:'The research provider is temporarily unavailable.',PROVIDER_REJECTED:'The research provider rejected the request. Check its configuration.',BUDGET_EXHAUSTED:'This research reached its request or token limit.'};
+    job.safeError=`${messages[options.errorCode||'']||'Research could not finish.'} ${exhausted?'This job has reached its request limit. ':''}Saved evidence is preserved.${exhausted?'':' You can retry from the last saved step.'}`;
+    job.token=null;job.leaseExpires=0;job.events.push(event(job.stage,job.safeError));void safeMessage;
+  });
 }
 export async function releaseResearchJob(jobId: string,token: string) {return mutate(jobId,token,(_tx,job)=>{job.status='queued';job.token=null;job.leaseExpires=0;});}
 export async function cancelResearchJob(purchaseId: string,userId: string) {

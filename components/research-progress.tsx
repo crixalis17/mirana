@@ -11,7 +11,7 @@ class ProgressReadError extends Error {
 const activeStatuses = new Set(['queued', 'running', 'retry_pending']);
 const stages: Record<string, string> = {
   plan: 'Preparing your research plan', gather: 'Gathering product and review evidence',
-  read: 'Reading original product pages and reviews',
+  read: 'Reading product sources and reviews',
   assess: 'Checking the evidence', followup: 'Investigating missing details',
   synthesize: 'Comparing suitable products', verify: 'Verifying the comparison', publish: 'Saving your recommendations',
 };
@@ -110,6 +110,8 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
   const active = activeStatuses.has(status);
   const plan = object(job?.plan);
   const coverage = object(job?.coverage);
+  const limits = object(job?.limits);
+  const requestLimitReached = typeof limits.attemptedCalls === 'number' && typeof limits.maxCalls === 'number' && limits.attemptedCalls >= limits.maxCalls;
   const gaps = status === 'completed' ? strings(reportGaps) : strings(coverage.gaps);
   const uniqueGaps = [...new Set(gaps)];
   const events = Array.isArray(job?.events) ? job.events.map(object).slice(-5) : [];
@@ -120,7 +122,7 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
       {status === 'queued' ? <p className="field-note">Your request is saved. The background worker will continue from here.</p> : null}
       {status === 'retry_pending' && typeof job?.retryAt === 'string' ? <p className="field-note">Next attempt: {new Date(job.retryAt).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})} IST</p> : null}
     </div>
-    {typeof coverage.readCount==='number' ? <p className="field-note">{coverage.readCount} original sources read · {typeof coverage.blockedCount==='number'?coverage.blockedCount:0} unavailable or unreadable</p> : null}
+    {typeof coverage.readCount==='number' ? <p className="field-note">{coverage.readCount} original pages read · {typeof coverage.providerReadCount==='number'?coverage.providerReadCount:0} provider extractions or API records read · {typeof coverage.blockedCount==='number'?coverage.blockedCount:0} unavailable or unreadable</p> : null}
     {strings(plan.criteria).length || strings(plan.questions).length ? <details><summary>Research plan</summary>
       {strings(plan.hardRequirements).length ? <><h3>Your requirements</h3><ul>{strings(plan.hardRequirements).map((item,index)=><li key={index}>{item}</li>)}</ul></> : null}
       {strings(plan.criteria).length ? <ul>{strings(plan.criteria).map((item, index) => <li key={index}>{item}</li>)}</ul> : null}
@@ -136,10 +138,11 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
     <div className="status-actions">
       {active ? <button className="outline-button" disabled={busy} onClick={() => change('cancel')}>{busy ? 'Updating…' : 'Cancel research'}</button> : null}
       {status==='queued'&&strings(job?.completedSteps).length ? <button className="outline-button" disabled={busy||!canResearch||itemInactive} onClick={()=>change('start')}>Continue research</button> : null}
-      {['failed', 'cancelled'].includes(status) ? <button className="outline-button" disabled={busy || !canResearch || itemInactive} onClick={() => change('retry')}>{busy ? 'Updating…' : 'Retry research'}</button> : null}
+      {['failed', 'cancelled'].includes(status)&&!requestLimitReached ? <button className="outline-button" disabled={busy || !canResearch || itemInactive} onClick={() => change('retry')}>{busy ? 'Updating…' : 'Retry research'}</button> : null}
       {loaded && !job && !error && canStart ? <button className="outline-button" disabled={busy || !canResearch || itemInactive} onClick={() => change('start')}>{busy ? 'Starting…' : 'Start research'}</button> : null}
     </div>
     {itemInactive ? <p className="field-note">Resume this item before starting or retrying research.</p> : null}
+    {requestLimitReached&&status!=='completed'&&!active ? <p className="field-note">The request limit for this saved research has been reached. Its evidence is preserved.</p> : null}
     {!canResearch ? <p className="field-note">Connect a research provider to start or retry.</p> : null}
     {active || ['failed', 'cancelled'].includes(status) || !job ? <p className="field-note">Research uses your configured AI provider. Starting or retrying can incur usage charges.</p> : null}
   </section>;

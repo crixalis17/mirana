@@ -34,7 +34,7 @@ let deniedFetches=0;const noDispatch=createAdkVertexModel({env,signal,fetch:asyn
 for(const bad of [{...request,model:'another-model'},{...request,config:{tools:[{urlContext:{}}]}},{...request,config:{maxOutputTokens:ADK_MODEL_LIMITS.maxOutputTokens+1}},{...request,contents:[{role:'user',parts:[{text:'x'.repeat(ADK_MODEL_LIMITS.inputBytes)}]}]}])await assert.rejects(collect(noDispatch,bad),error=>error.code==='INVALID_INPUT'||error.code==='INVALID_MODEL');
 assert.equal(deniedFetches,0);
 await assert.rejects(collect(createAdkVertexModel({env,signal,beforeModelCall:async()=>{throw Object.assign(new Error('No lease'),{code:'lease_lost'});},fetch:async()=>{throw new Error('Must not dispatch');}})),error=>error.code==='lease_lost');
-await assert.rejects(collect(createAdkVertexModel({env,signal,fetch:async()=>new Response(`${env.GOOGLE_API_KEY} private quota details`,{status:429})})),error=>error.code==='RATE_LIMIT'&&error.retryable&&!error.message.includes(env.GOOGLE_API_KEY));
+await assert.rejects(collect(createAdkVertexModel({env,signal,fetch:async()=>new Response(`${env.GOOGLE_API_KEY} private quota details`,{status:429})})),error=>error.code==='RATE_LIMIT'&&error.statusCode===429&&error.retryable&&!error.message.includes(env.GOOGLE_API_KEY));
 await assert.rejects(collect(createAdkVertexModel({env,signal,fetch:async()=>new Response('x'.repeat(ADK_MODEL_LIMITS.responseBytes+1))})),error=>error.code==='INVALID_OUTPUT');
 let incompleteUsage=0;
 await assert.rejects(collect(createAdkVertexModel({env,signal,onModelUsage:async()=>{incompleteUsage++;},fetch:async()=>reply([{text:'Incomplete'}],{finishReason:'MAX_TOKENS'})})),error=>error.code==='INCOMPLETE_OUTPUT');

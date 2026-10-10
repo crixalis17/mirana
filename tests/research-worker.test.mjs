@@ -76,6 +76,13 @@ try {
   const providerFailure=Object.assign(new Error('Private upstream response body'),{retryable:true});
   assert.equal((await runResearchJob(failure.id,{},async()=>{throw providerFailure;})).status,'retry_pending');
   view=await jobs.getResearchJob('failure','owner');assert.equal(view.stage,'gather');assert.equal(view.limits.attemptedCalls,2);assert.deepEqual(JSON.parse((await row('failure')).report),previous);assert.equal(JSON.stringify(view).includes('Private upstream'),false);
+  // A rate-limited last attempt cannot schedule or advertise an impossible retry.
+  process.env.RESEARCH_MAX_CALLS='1';const quotaExhausted=await create('quota-exhausted');delete process.env.RESEARCH_MAX_CALLS;
+  const quotaFailure=Object.assign(new Error('SECRET-CANARY upstream response'),{retryable:true,code:'RATE_LIMIT',statusCode:429});
+  assert.equal((await runResearchJob(quotaExhausted.id,{},async()=>{throw quotaFailure;})).status,'failed');
+  const quotaView=await jobs.getResearchJob('quota-exhausted','owner');assert.equal(quotaView.status,'failed');assert.equal(quotaView.retryAt,null);assert.equal(quotaView.limits.attemptedCalls,1);
+  assert.match(quotaView.error,/Google rate-limited/);assert.match(quotaView.error,/request limit/);assert.equal(JSON.stringify(quotaView).includes('SECRET-CANARY'),false);
+  await assert.rejects(jobs.retryResearchJob('quota-exhausted','owner'),/budget reached/i);
   // Cancellation during an outstanding call prevents its output from becoming a checkpoint/report.
   const cancelled=await create('inflight-cancel',brief,previous);
   const stopped=await runResearchJob(cancelled.id,{},async(stage,context)=>{await jobs.cancelResearchJob('inflight-cancel','owner');return runner(stage,context);});

@@ -11,6 +11,7 @@ export type ProviderRequest = { instructions: string; input: Json; schema?: Json
   beforeToolCall?:(provider:string,tool:string)=>Promise<void> };
 export class ResearchProviderError extends Error {
   code: string; retryable: boolean;
+  statusCode?:number;
   constructor(message: string, code: string, retryable = false) {super(message);this.code=code;this.retryable=retryable;}
 }
 

@@ -85,7 +85,7 @@ export function researchJobView(value: unknown): Json | null {
   if (data.limits) { const limits = record(data.limits); job.limits = Object.fromEntries(['maxCalls','maxRounds','attemptedCalls','maxToolCalls','attemptedToolCalls']
     .filter(key => typeof limits[key] === 'number' && Number.isFinite(limits[key])).map(key => [key, limits[key]])); }
   if (data.coverage) { const coverage = record(data.coverage); job.coverage = {gaps: stringList(coverage.gaps),toolCalls:records(coverage.toolCalls).slice(0,36).map(call=>fields(call,['tool','provider','status','sourceCount','offerCount','errorCode'])),
-    ...Object.fromEntries(['sources','facts','sourceCount','readCount','blockedCount','gapCount'].filter(key => typeof coverage[key] === 'number' && Number.isFinite(coverage[key])).map(key => [key, coverage[key]]))}; }
+    ...Object.fromEntries(['sources','facts','sourceCount','readCount','providerReadCount','blockedCount','gapCount'].filter(key => typeof coverage[key] === 'number' && Number.isFinite(coverage[key])).map(key => [key, coverage[key]]))}; }
   return job;
 }
 function researchResult(value: unknown) {

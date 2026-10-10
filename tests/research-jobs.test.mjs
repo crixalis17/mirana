@@ -63,7 +63,9 @@ try {
   // Original-page read checkpoints append by round and survive release/reclaim.
   const privateBody='PRIVATE-CHECKPOINT-CANARY';
   await insert('read-checkpoints');const readJob=await jobs.ensureResearchJob('read-checkpoints','owner'),readClaim=await jobs.claimResearchJob(readJob.id);
-  const initialRead={round:0,sources:[{url:'https://example.com/product',accessStatus:'read',bodyText:privateBody,contentHash:'PRIVATE-HASH-CANARY'}]};
+  const initialRead={round:0,sources:[{url:'https://example.com/product',accessStatus:'read',bodyText:privateBody,contentHash:'PRIVATE-HASH-CANARY',textTrust:'untrusted-original-page'},
+    {url:'https://example.com/provider-listing',accessStatus:'read',bodyText:privateBody,contentHash:'PRIVATE-HASH-CANARY',textTrust:'untrusted-provider-api-json'},
+    {url:'https://example.com/provider-extraction',accessStatus:'read',bodyText:privateBody,contentHash:'PRIVATE-HASH-CANARY',textTrust:'untrusted-provider-page'}]};
   const followupRead={round:1,sources:[{url:'https://example.com/compatibility',accessStatus:'blocked',bodyText:'',rawError:privateBody}]};
   await jobs.completeResearchStep(readJob.id,readClaim.token,'plan',{criteria:['Compatible kit']},'gather');
   await jobs.completeResearchStep(readJob.id,readClaim.token,'gather',{sources:[{url:'https://example.com/product'}]},'read');
@@ -78,7 +80,9 @@ try {
   const storedRead=(await client.execute({sql:'SELECT payload FROM research_jobs WHERE id=?',args:[readJob.id]})).rows[0];
   assert.deepEqual(JSON.parse(storedRead.payload).outputs.read,[initialRead,followupRead]);
   const publicRead=await jobs.getResearchJob('read-checkpoints','owner');
-  assert.equal(publicRead.coverage.sourceCount,2);assert.equal(publicRead.coverage.readCount,1);assert.equal(publicRead.coverage.blockedCount,1);
+  assert.equal(publicRead.coverage.sourceCount,2);assert.equal(publicRead.coverage.readCount,1,'A Bright Data field projection or provider extraction is not an independently read original page');
+  assert.equal(publicRead.coverage.providerReadCount,2,'Readable provider JSON and page extractions are counted separately');
+  assert.equal(publicRead.coverage.blockedCount,1,'Readable provider evidence must not be counted as blocked');
   assert.equal(JSON.stringify(publicRead).includes(privateBody),false);assert.equal(JSON.stringify(publicRead).includes('PRIVATE-HASH-CANARY'),false);
   // Budget validation uses the actual request estimate, retaining reservation accounting and lease fencing.
   process.env.RESEARCH_MAX_INPUT_TOKENS='50';await insert('input-budget');const inputJob=await jobs.ensureResearchJob('input-budget','owner');delete process.env.RESEARCH_MAX_INPUT_TOKENS;

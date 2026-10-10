@@ -89,8 +89,9 @@ async function readChunk(reader:ReadableStreamDefaultReader<Uint8Array>,signal:A
   });
 }
 async function readResponse(response:Response,signal:AbortSignal):Promise<RecordValue> {
-  if(!response.ok){await response.body?.cancel();throw new ResearchProviderError(response.status===429?'Research quota or rate limit reached.':'Research provider rejected the request.',
-    response.status===429?'RATE_LIMIT':response.status>=500?'PROVIDER_UNAVAILABLE':'PROVIDER_REJECTED',response.status===429||response.status>=500);}
+  if(!response.ok){await response.body?.cancel();const error=new ResearchProviderError(response.status===429?'Research quota or rate limit reached.':'Research provider rejected the request.',
+    response.status===429?'RATE_LIMIT':response.status>=500?'PROVIDER_UNAVAILABLE':'PROVIDER_REJECTED',response.status===429||response.status>=500);
+    error.statusCode=response.status;throw error;}
   const reader=response.body?.getReader();if(!reader)throw new ResearchProviderError('Research returned no response.','INVALID_OUTPUT');
   const chunks:Uint8Array[]=[];let bytes=0;
   try {

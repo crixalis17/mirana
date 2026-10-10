@@ -103,13 +103,15 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
     logResearchEvent({jobId,event:'lease',stage:job.stage,attempt:job.attemptedCalls});
     return { status: 'pending', steps };
   } catch (error) {
-    logResearchEvent({jobId,event:'failed',stage:job.stage,attempt:job.attemptedCalls,errorCode:safeResearchErrorCode(error),
+    const errorCode=safeResearchErrorCode(error);
+    logResearchEvent({jobId,event:'failed',stage:job.stage,attempt:job.attemptedCalls,errorCode,
+      statusCode:error&&typeof error==='object'&&'statusCode' in error&&typeof error.statusCode==='number'?error.statusCode:undefined,
       retryable:!!(error&&typeof error==='object'&&'retryable' in error&&error.retryable===true)});
     if ((error instanceof ResearchJobError && ['lease_lost', 'cancelled', 'superseded'].includes(error.code)) ||
       (error instanceof AutomationError && error.status === 409)) return { status: 'superseded', steps };
-    const retryable = !!(error && typeof error === 'object' && 'retryable' in error && error.retryable === true);
+    const retryable = !!(error && typeof error === 'object' && 'retryable' in error && error.retryable === true) && job.attemptedCalls<job.limits.maxCalls;
     try { await failResearchJob(jobId, token, 'Research could not finish. Saved evidence is preserved.', {
-      retryable, retryAt: retryable ? new Date(Date.now() + 60000).toISOString() : undefined,
+      retryable,errorCode, retryAt: retryable ? new Date(Date.now() + Math.min(900000,60000*2**Math.min(4,Math.max(0,job.attemptedCalls-1)))).toISOString() : undefined,
     }); } catch { /* Cancellation, edits and lease loss must not acquire a stale error. */ }
     return { status: retryable ? 'retry_pending' : 'failed', steps };
   }
