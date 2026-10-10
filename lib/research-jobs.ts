@@ -21,8 +21,8 @@ export function canonicalResearchBrief(brief: RecordValue) {
 export function researchBriefHash(brief: RecordValue) {return createHash('sha256').update(JSON.stringify(canonicalResearchBrief(brief))).digest('hex');}
 function revision(brief: RecordValue) {return typeof brief.briefRevision==='number' && Number.isSafeInteger(brief.briefRevision) && brief.briefRevision >= 0 ? brief.briefRevision : 0;}
 function bound(name: string, fallback: number, maximum: number) {const value=Number(process.env[name]); return Number.isInteger(value)&&value>0 ? Math.min(value,maximum) : fallback;}
-function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',12,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',process.env.RESEARCH_TOOLS_ENABLED==='true'?48000:24000,48000)};}
-const leaseMs=240000;
+function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',12,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',process.env.RESEARCH_TOOLS_ENABLED==='true'?196608:24000,196608)};}
+const leaseMs=360000;
 const now=()=>new Date().toISOString();
 function event(stage: ResearchStage, message: string) {return {id:randomUUID(),at:now(),stage,message};}
 const stageLabels: Record<ResearchStage,string>={plan:'Preparing a research plan.',gather:'Gathering product evidence.',read:'Reading original source documents.',assess:'Assessing evidence and requirements.',followup:'Checking gaps in the evidence.',synthesize:'Comparing supported candidates.',verify:'Checking recommendation evidence.',publish:'Preparing your results.'};
@@ -88,11 +88,17 @@ export function researchJobDTO(job: ResearchJob) {
   const originals=new Map<string,{accessStatus:string;bodyText?:string}>();
   for(const batch of (job.outputs?.read||[]))for(const source of (batch.sources||[]))originals.set(source.url,source);
   const readCount=[...originals.values()].filter(source=>source.accessStatus==='read'&&source.bodyText).length;
+  const toolNames=new Set(['search_products_india','fetch_product_listing','amazon_price_history','search_web_tavily','read_source_tavily','search_web_firecrawl','read_source_firecrawl','read_source_page','search_web_mcp','read_source_mcp','google_search']);
+  const providers=new Set(['product-api','web-api','original-page','serpapi-mcp','brightdata-mcp','tavily','firecrawl','google']);
+  const toolCalls=batches.flatMap(batch=>batch.toolCalls||[]).slice(0,36).filter((call:RecordValue)=>toolNames.has(String(call.tool))&&providers.has(String(call.provider))).map((call:RecordValue)=>({
+    tool:String(call.tool),provider:String(call.provider),status:['ok','error','unavailable','limited'].includes(String(call.status))?String(call.status):'error',
+    sourceCount:Number.isSafeInteger(call.sourceCount)?Number(call.sourceCount):0,offerCount:Number.isSafeInteger(call.offerCount)?Number(call.offerCount):0,
+    ...(/^[A-Z_]{1,40}$/.test(String(call.errorCode||''))?{errorCode:String(call.errorCode)}:{})}));
   return {id:job.id,purchaseId:job.purchaseId,briefRevision:job.briefRevision,status:job.status,stage:job.stage,rounds:job.rounds,createdAt:job.createdAt,updatedAt:job.updatedAt,retryAt:job.retryAt,error:job.safeError||null,
     limits:{maxCalls:job.limits.maxCalls,maxToolCalls:job.limits.maxToolCalls,maxRounds:job.limits.maxRounds,attemptedCalls:job.attemptedCalls,attemptedToolCalls:job.attemptedToolCalls},
     events:job.events.slice(-40),plan:{criteria:publicStrings(plan.criteria),hardRequirements:publicStrings(plan.hardRequirements),softPreferences:publicStrings(plan.softPreferences),questions:publicStrings(plan.questions)},
     completedSteps:Object.keys(job.outputs).filter(key=>stages.includes(key as ResearchStage)),
-    coverage:{sourceCount,readCount,blockedCount:originals.size-readCount,gapCount:gaps.length,gaps}};
+    coverage:{sourceCount,readCount,blockedCount:originals.size-readCount,gapCount:gaps.length,gaps,toolCalls}};
 }
 export async function ensureResearchJob(purchaseId: string,userId: string) {
   return transaction(async tx=>{
@@ -202,5 +208,5 @@ export async function cancelResearchJob(purchaseId: string,userId: string) {
 }
 export async function retryResearchJob(purchaseId: string,userId: string) {
   const created=await ensureResearchJob(purchaseId,userId);
-  return transaction(async tx=>{const job=(await find(tx,created.id))!,row=await purchase(tx,purchaseId,userId);if(!row||stopped(row))throw new Error('Resume the shopping item before retrying research.');if(job.status==='completed'||job.status==='superseded')throw new Error('This research cannot be retried.');if(job.status==='running'&&job.leaseExpires>Date.now())return researchJobDTO(job);if(job.attemptedCalls>=job.limits.maxCalls)throw new Error('Research budget reached. Edit the brief to start a new bounded research job.');job.status='queued';job.token=null;job.leaseExpires=0;job.retryAt=null;job.safeError=null;job.updatedAt=now();job.events.push(event(job.stage,'Research queued from the last saved step.'));await save(tx,job);return researchJobDTO(job);});
+  return transaction(async tx=>{const job=(await find(tx,created.id))!,row=await purchase(tx,purchaseId,userId);if(!row||stopped(row))throw new Error('Resume the shopping item before retrying research.');if(job.status==='completed'||job.status==='superseded')throw new Error('This research cannot be retried.');if(job.status==='running'&&job.leaseExpires>Date.now())return researchJobDTO(job);if(process.env.RESEARCH_RETRY_JOB_ID===job.id){const extension=Number(process.env.RESEARCH_RETRY_OUTPUT_BUDGET);if(Number.isSafeInteger(extension)&&extension>0&&extension<=196608)job.limits.maxOutputTokens=Math.max(job.limits.maxOutputTokens,extension);}if(job.attemptedCalls>=job.limits.maxCalls)throw new Error('Research budget reached. Edit the brief to start a new bounded research job.');job.status='queued';job.token=null;job.leaseExpires=0;job.retryAt=null;job.safeError=null;job.updatedAt=now();job.events.push(event(job.stage,'Research queued from the last saved step.'));await save(tx,job);return researchJobDTO(job);});
 }

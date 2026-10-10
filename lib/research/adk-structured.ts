@@ -1,6 +1,6 @@
 import {LlmAgent,isFinalResponse} from '@google/adk';
 import type {Schema} from '@google/genai';
-import {createAdkVertexModel} from './adk-model';
+import {createAdkVertexModel,ADK_MODEL_LIMITS} from './adk-model';
 import {configureAdkPrivacy,runIsolatedAdk} from './adk-runtime';
 import {ResearchProviderError,validateProviderSchema,vertexSchema} from './provider';
 import type {ProviderAnswer,ProviderRequest,ResearchUsage} from './provider';
@@ -15,7 +15,7 @@ export async function researchAdkStructuredRequest(request:ProviderRequest,signa
   if(request.search)throw new ResearchProviderError('Search requires the registered research tool agent.','PROVIDER_REJECTED');
   configureAdkPrivacy();
   const env=options.env||process.env;
-  const maxOutputTokens=request.maxOutputTokens??6000;
+  const maxOutputTokens=request.maxOutputTokens??ADK_MODEL_LIMITS.maxOutputTokens;
   const usage:ResearchUsage={provider:'vertex',model:'gemini-3.8-flash',inputTokens:0,outputTokens:0,thinkingTokens:0,searchQueries:0};
   const model=createAdkVertexModel({env,fetch:options.fetch,signal,maxOutputTokens,
     beforeModelCall:request.beforeModelCall,

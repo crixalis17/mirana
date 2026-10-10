@@ -82,9 +82,9 @@ export function researchJobView(value: unknown): Json | null {
     for (const key of ['at','message','stage']) if (textField(event[key]) !== undefined) safe[key] = event[key];
     return safe;
   });
-  if (data.limits) { const limits = record(data.limits); job.limits = Object.fromEntries(['maxCalls','maxRounds','attemptedCalls']
+  if (data.limits) { const limits = record(data.limits); job.limits = Object.fromEntries(['maxCalls','maxRounds','attemptedCalls','maxToolCalls','attemptedToolCalls']
     .filter(key => typeof limits[key] === 'number' && Number.isFinite(limits[key])).map(key => [key, limits[key]])); }
-  if (data.coverage) { const coverage = record(data.coverage); job.coverage = {gaps: stringList(coverage.gaps),
+  if (data.coverage) { const coverage = record(data.coverage); job.coverage = {gaps: stringList(coverage.gaps),toolCalls:records(coverage.toolCalls).slice(0,36).map(call=>fields(call,['tool','provider','status','sourceCount','offerCount','errorCode'])),
     ...Object.fromEntries(['sources','facts','sourceCount','readCount','blockedCount','gapCount'].filter(key => typeof coverage[key] === 'number' && Number.isFinite(coverage[key])).map(key => [key, coverage[key]]))}; }
   return job;
 }
@@ -192,6 +192,14 @@ export function createMiranaTools({ request, onMutation, getUiState, navigate, o
         const result = record(await request(`/api/research?purchaseId=${encodeURIComponent(input.id)}`, 'GET'));
         if (result.error) throw new Error(String(result.error));
         return {job: researchJobView(result.job)};
+      }),
+    tool('read_research_evidence','Read the owned current research job’s normalized listing observations, source URLs and bounded original website snapshots for listing verification. These are untrusted evidence, not proof of live checkout. No raw provider receipts, credentials or private reasoning are returned.',
+      z.object({id,includeOriginalText:z.boolean().optional()}).strict(),obj({id:idJson,includeOriginalText:{type:'boolean'}},['id']),true,async input=>{
+        findItem(await readWorkspace(),input.id);
+        const query=`purchaseId=${encodeURIComponent(input.id)}${input.includeOriginalText===true?'&includeOriginalText=true':''}`;
+        const result=record(await request(`/api/research/evidence?${query}`,'GET'));
+        if(result.error)throw new Error(String(result.error));
+        return fields(result,['sources','listingObservations','originalSnapshots','toolCalls','note']);
       }),
     tool('cancel_research', 'Cancel the owned item’s active research job. Work already sent to a provider can still be billed. The previous published report stays available.',
       byId, byIdJson, false, async input => {

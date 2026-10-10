@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createClient} from '@libsql/client';
 registerHooks({resolve(specifier,context,next){try{return next(specifier,context);}catch(error){if(specifier.startsWith('.'))return next(`${specifier}.ts`,context);throw error;}}});
 const directory=await mkdtemp(join(tmpdir(),'mirana-research-jobs-'));
-const keys=['TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','NODE_ENV','RESEARCH_MAX_CALLS','RESEARCH_MAX_TOOL_CALLS','RESEARCH_MAX_ROUNDS','RESEARCH_MAX_INPUT_TOKENS','RESEARCH_MAX_OUTPUT_TOKENS','RESEARCH_USER_DAILY_JOB_LIMIT','RESEARCH_DAILY_JOB_LIMIT'];
+const keys=['TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','NODE_ENV','RESEARCH_MAX_CALLS','RESEARCH_MAX_TOOL_CALLS','RESEARCH_MAX_ROUNDS','RESEARCH_MAX_INPUT_TOKENS','RESEARCH_MAX_OUTPUT_TOKENS','RESEARCH_USER_DAILY_JOB_LIMIT','RESEARCH_DAILY_JOB_LIMIT','RESEARCH_RETRY_JOB_ID','RESEARCH_RETRY_OUTPUT_BUDGET'];
 const saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
 let client;
 try {
@@ -137,5 +137,21 @@ try {
   await insert('production-global-limit','new-owner');process.env.RESEARCH_DAILY_JOB_LIMIT='1';
   await assert.rejects(jobs.ensureResearchJob('production-global-limit','new-owner'),error=>error.code==='daily_limit');
   assert.equal((await jobs.ensureResearchJob('model-reserve','owner')).id,modelJob.id,'Existing jobs are idempotent even after a daily cap');
+  process.env.NODE_ENV='test';
+  await insert('authorized-output-extension');const extensionJob=await jobs.ensureResearchJob('authorized-output-extension','owner');
+  let extensionLease=await jobs.claimResearchJob(extensionJob.id);
+  await jobs.reserveResearchCall(extensionJob.id,extensionLease.token);
+  await jobs.recordResearchUsage(extensionJob.id,extensionLease.token,{inputTokens:11,outputTokens:12});
+  await jobs.failResearchJob(extensionJob.id,extensionLease.token,'truncated');
+  process.env.RESEARCH_RETRY_JOB_ID='a-different-job';process.env.RESEARCH_RETRY_OUTPUT_BUDGET='131072';
+  await jobs.retryResearchJob('authorized-output-extension','owner');
+  extensionLease=await jobs.claimResearchJob(extensionJob.id);assert.equal(extensionLease.job.limits.maxOutputTokens,extensionJob.limits.maxOutputTokens);
+  await jobs.failResearchJob(extensionJob.id,extensionLease.token,'truncated');
+  process.env.RESEARCH_RETRY_JOB_ID=extensionJob.id;
+  await jobs.retryResearchJob('authorized-output-extension','owner');
+  extensionLease=await jobs.claimResearchJob(extensionJob.id);
+  assert.equal(extensionLease.job.limits.maxOutputTokens,131072);
+  assert.equal(extensionLease.job.attemptedCalls,1);assert.equal(extensionLease.job.outputTokens,12);assert.equal(extensionLease.job.inputTokens,11);
+  delete process.env.RESEARCH_RETRY_JOB_ID;delete process.env.RESEARCH_RETRY_OUTPUT_BUDGET;
   console.log('PASS: durable bounded jobs, tool/model attempt budgets across retries, legacy defaults and hard cap, final-call reserve, ownership, checkpoint journals, input checks and lease/cancellation fencing');
 } finally {client?.close();await rm(directory,{recursive:true,force:true});for(const [key,value] of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

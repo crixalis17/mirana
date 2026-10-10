@@ -8,13 +8,13 @@ const result=(parts,groundingMetadata)=>new Response(JSON.stringify({candidates:
 const call=(name,args,id)=>({functionCall:{name,args,id},thoughtSignature:'fixture-signature'});
 let model=0,products=0,listing=0;const reservations=[],requests=[];
 const answer=await researchToolAgentRequest({instructions:'Research the user brief.',input:{product:'tablet',budget:60000},search:true},signal,{env,
- beforeModelCall:async(bytes,max)=>{assert.ok(bytes>0);assert.equal(max,6000);reservations.push('model');},
+ beforeModelCall:async(bytes,max)=>{assert.ok(bytes>0);assert.equal(max,65536);reservations.push('model');},
  beforeToolCall:async(provider,name)=>reservations.push(`${provider}:${name}`),
  fetch:async(target,init)=>{const parsed=new URL(target);requests.push(parsed.hostname);
   if(parsed.hostname==='aiplatform.googleapis.com'){
    assert.equal(target,`${toolAgentVertexEndpoint(env)}/models/gemini-3.8-flash:generateContent`);
    assert.equal(new Headers(init.headers).get('x-goog-api-key'),env.GOOGLE_API_KEY);
-   const body=JSON.parse(init.body);assert.ok(body.tools.some(t=>t.googleSearch));
+   const body=JSON.parse(init.body);assert.equal(body.tools.some(t=>t.googleSearch),false,'Native Google Search requires explicit opt-in; provider tools remain available');
    assert.ok(body.tools.some(t=>t.functionDeclarations?.some(f=>f.name==='fetch_product_listing')));
    if(model++===0)return result([call('search_products_india',{query:'tablet pen India'},'s1'),call('search_products_india',{query:'tablet pen India'},'s2')]);
    if(model===2){assert.ok(JSON.stringify(body).includes('search-result'));return result([call('fetch_product_listing',{url},'l1')]);}
@@ -63,6 +63,53 @@ assert.equal(mcp.sources.length,1);assert.equal(mcp.diagnostics.mcpSources[0].te
 assert.equal(JSON.stringify(mcp).includes(env.SERPAPI_API_KEY),false);
 assert.equal(mcp.diagnostics.observations.length,0,'MCP snippets must not become exact listing observations');
 
+// Native grounding is a last resort, gated by actual configured discovery
+// outcomes. An extraction failure must never stand in for a search failure.
+const fallbackEnv={NODE_ENV:'test',GOOGLE_API_KEY:env.GOOGLE_API_KEY,GOOGLE_CLOUD_PROJECT:env.GOOGLE_CLOUD_PROJECT,
+ GEMINI_RESEARCH_MODEL:env.GEMINI_RESEARCH_MODEL,RESEARCH_NATIVE_SEARCH_ENABLED:'true',TAVILY_ACCESS_MODE:'keyed',TAVILY_API_KEY:'tavily-credential-canary'};
+const nativeGrounding={webSearchQueries:['Acme Watch review India'],groundingChunks:[{web:{uri:url,title:'Acme Watch listing'}}]};
+for(const empty of [false,true]){
+ let turns=0,searchCalls=0;
+ const fallback=await researchToolAgentRequest({instructions:'Find supported product leads.',input:{product:'watch'},search:true},signal,{env:fallbackEnv,fetch:async(target,init)=>{
+  if(new URL(target).hostname==='api.tavily.com'){searchCalls++;assert.equal(new URL(target).pathname,'/search');return empty?Response.json({results:[]}):new Response('private provider detail',{status:503});}
+  assert.equal(new URL(target).hostname,'aiplatform.googleapis.com');const body=JSON.parse(init.body),native=(body.tools||[]).some(tool=>tool.googleSearch);
+  assert.ok(JSON.stringify(body.systemInstruction).includes('FINAL RESORT'),'Prompt must explicitly reserve native Search for last resort');
+  if(turns++===0){assert.equal(native,false,'A configured external discovery tool must run first');return result([call('search_web_tavily',{query:'Acme Watch India'},'tav-failure')]);}
+  assert.equal(native,true,'Failed or empty Tavily-only discovery unlocks the final-resort tool');return result([{text:'A native search lead was found; checkout remains unknown.'}],nativeGrounding);
+ }});
+ assert.equal(searchCalls,1);assert.equal(turns,2);assert.equal(fallback.searched,true);assert.equal(fallback.sources[0].url,url);
+ assert.ok(fallback.diagnostics.toolCalls.some(trace=>trace.tool==='google_search'&&trace.provider==='google'));
+ assert.ok(fallback.diagnostics.limitations.some(value=>value.includes('final resort')));
+ for(const secret of [fallbackEnv.GOOGLE_API_KEY,fallbackEnv.TAVILY_API_KEY])assert.equal(JSON.stringify(fallback).includes(secret),false);
+ assert.equal(JSON.stringify(fallback.diagnostics).includes('private provider detail'),false);
+}
+
+let successfulTurns=0;
+const successfulExternal=await researchToolAgentRequest({instructions:'Discover then read product.',input:{},search:true},signal,{env:fallbackEnv,fetch:async(target,init)=>{
+ if(new URL(target).hostname==='api.tavily.com')return Response.json({results:[{url,title:'Acme Watch review',content:'Exact watch discovery lead.'}]});
+ const body=JSON.parse(init.body);assert.equal((body.tools||[]).some(tool=>tool.googleSearch),false,'Usable external discovery suppresses fallback on every subsequent turn');
+ if(successfulTurns++===0)return result([call('search_web_tavily',{query:'Acme Watch India'},'tav-success')]);
+ if(successfulTurns===2)return result([call('fetch_product_listing',{url},'unavailable-extraction')]);
+ return result([{text:'External discovery is usable; listing extraction is unavailable and checkout remains unknown.'}]);
+}});
+assert.equal(successfulTurns,3);assert.equal(successfulExternal.searched,true);
+assert.equal(successfulExternal.diagnostics.toolCalls.some(trace=>trace.tool==='google_search'),false);
+assert.ok(successfulExternal.diagnostics.toolCalls.some(trace=>trace.tool==='fetch_product_listing'&&trace.status==='unavailable'));
+
+let allFailedTurns=0;
+const allFailedEnv={...fallbackEnv,SERPAPI_API_KEY:env.SERPAPI_API_KEY};
+const allFailed=await researchToolAgentRequest({instructions:'Discover product leads.',input:{},search:true},signal,{env:allFailedEnv,fetch:async(target,init)=>{
+ const host=new URL(target).hostname;
+ if(host==='api.tavily.com')return new Response('',{status:503});
+ if(host==='serpapi.com')return Response.json({search_metadata:{status:'Success'},shopping_results:[]});
+ if(host==='mcp.serpapi.com')return new Response('',{status:401});
+ const body=JSON.parse(init.body),native=(body.tools||[]).some(tool=>tool.googleSearch);
+ if(allFailedTurns++===0){assert.equal(native,false);return result([call('search_web_tavily',{query:'Acme Watch India'},'first-failed')]);}
+ if(allFailedTurns===2){assert.equal(native,false,'One failure does not unlock fallback while other configured discovery tools remain unattempted');return result([call('search_products_india',{query:'Acme Watch India'},'shopping-empty'),call('search_web_mcp',{query:'Acme Watch review'},'mcp-failed')]);}
+ assert.equal(native,true,'All configured discovery operations failed or returned no leads');return result([{text:'Native discovery is the final resort after unavailable external searches.'}],nativeGrounding);
+}});
+assert.equal(allFailedTurns,3);assert.ok(allFailed.diagnostics.toolCalls.some(trace=>trace.tool==='google_search'));
+
 let attempts=0;
 const budget=await researchToolAgentRequest({instructions:'Search.',input:{product:'tablet'},search:true},signal,{env,
  beforeModelCall:async()=>{if(++attempts>1)throw Object.assign(new Error('budget'),{code:'budget_exhausted'});},
@@ -73,4 +120,4 @@ await assert.rejects(researchToolAgentRequest({instructions:'Search.',input:{},s
 for(const override of [{NODE_ENV:'production'},{VERCEL:'1'},{GEMINI_RESEARCH_MODEL:'other-model'}])assert.throws(()=>toolAgentVertexEndpoint({...env,...override}));
 await assert.rejects(researchToolAgentRequest({instructions:'Search.',input:{},search:true},signal,{env,fetch:async()=>new Response('provider private details',{status:401})}),e=>e.code==='PROVIDER_REJECTED'&&!e.message.includes('private'));
 const abort=new AbortController();abort.abort();await assert.rejects(researchToolAgentRequest({instructions:'Search.',input:{},search:true},abort.signal,{env}));
-console.log('PASS: real ADK multi-step Gemini 3.8-only tool loop, Google Search coexistence, deduplicated API calls, provisional listing provenance, real MCP handshake/envelope parsing/redaction, per-call budget fences, quota redaction and local-only gates');
+console.log('PASS: real ADK multi-step Gemini 3.8-only tool loop, gated final-resort Google Search after all configured discovery failures, suppression after successful discovery, deduplicated API calls, provisional listing provenance, real MCP handshake/envelope parsing/redaction, per-call budget fences, quota redaction and production gates');

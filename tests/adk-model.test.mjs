@@ -26,7 +26,7 @@ assert.deepEqual(usage[0],{provider:'vertex',model:'gemini-3.8-flash',inputToken
 // ADK history replays function signatures and tool results without thought text.
 let replayBody;
 await collect(createAdkVertexModel({env,signal,fetch:async(_target,init)=>{replayBody=JSON.parse(init.body);return reply([{text:'Read this listing before deciding.'}]);}}),{...request,config:{...request.config,responseSchema:undefined},contents:[...request.contents,events[0].content,{role:'user',parts:[{functionResponse:{name:'search_products_india',id:'a1',response:{ok:true,sources:[]}}}]}]});
-assert.equal(replayBody.contents[1].parts[0].thoughtSignature,'opaque-signature');assert.equal(replayBody.contents[2].parts[0].functionResponse.id,'a1');assert.equal(replayBody.generationConfig.maxOutputTokens,6000);
+assert.equal(replayBody.contents[1].parts[0].thoughtSignature,'opaque-signature');assert.equal(replayBody.contents[2].parts[0].functionResponse.id,'a1');assert.equal(replayBody.generationConfig.maxOutputTokens,65536);
 
 for(const override of [{NODE_ENV:'production'},{VERCEL:'1'},{GEMINI_RESEARCH_MODEL:'gemini-flash-latest'},{GOOGLE_CLOUD_PROJECT:'../other-project'}])assert.throws(()=>createAdkVertexModel({env:{...env,...override},signal}));
 assert.match(adkVertexEndpoint({...env,NODE_ENV:'production',RESEARCH_PRODUCTION_ENABLED:'true'}),/gemini-3.8-flash:generateContent$/);

@@ -12,7 +12,7 @@ export const workerConfigured = researchProviderConfigured;
 const billableStages = new Set(['plan', 'gather', 'assess', 'followup', 'synthesize']);
 type StageRunner = typeof runResearchStage;
 type JobOptions = { deadline?: number; maxSteps?: number };
-function stepTimeout() { return Math.max(10000, Math.min(180000, Number(process.env.RESEARCH_STEP_TIMEOUT_MS) || 120000)); }
+function stepTimeout() { return Math.max(10000, Math.min(240000, Number(process.env.RESEARCH_STEP_TIMEOUT_MS) || 120000)); }
 
 // HTTP callers cannot replace the stage runner; injection supports isolated worker tests.
 export async function runResearchJob(jobId: string, options: JobOptions = {}, runner: StageRunner = runResearchStage) {
@@ -20,7 +20,7 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
   if (!claimed) {logResearchEvent({jobId,event:'lease',errorCode:'lease_lost'});return { status: 'busy', steps: 0 };}
   const token = claimed.token;
   let job = claimed.job, steps = 0;
-  const deadline = options.deadline || Date.now() + 200000;
+  const deadline = options.deadline || Date.now() + 270000;
   try {
     while (steps < (options.maxSteps ?? 12)) {
       job = await assertResearchJobCurrent(jobId, token);
@@ -45,11 +45,13 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
         logResearchEvent({jobId,event:'publish',stage,elapsedMs:Date.now()-started,candidateCount:result.report.products?.length||0});
         return { status: 'completed', steps };
       }
-      const billable = billableStages.has(stage);
+      const finalizeWithoutModel=stage==='synthesize' && job.attemptedCalls>=job.limits.maxCalls && !!job.outputs.assess?.claimLedger;
+      const billable = billableStages.has(stage) && !finalizeWithoutModel;
       if (Date.now() + (billable ? stepTimeout() + 10000 : 50000) > deadline) break;
       const observations = await db().prepare('SELECT payload FROM observations WHERE purchase_id=?').bind(job.purchaseId).all();
       let firstGeneration=true,pendingOutputTokens=0,stageInputEstimate=0,usageRecorded=false;
       const input = { purchase: job.purchase, outputs: job.outputs, referenceDate: job.referenceDate,
+        finalizeWithoutModel,
         history: observations.results.map(row => JSON.parse(String(row.payload))).slice(-40),
         beforeProvider:async(request:ProviderRequest)=>{job=await checkResearchInputBudget(jobId,token,
           Buffer.byteLength(JSON.stringify(request.input))+Buffer.byteLength(request.instructions)+6000);},
@@ -57,8 +59,9 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
           if(!billable||!Number.isSafeInteger(inputBytes)||inputBytes<0||!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<=0)throw new Error('Invalid research generation budget.');
           // Bytes conservatively bound tokens, including returned tool observations.
           const estimate=stageInputEstimate+inputBytes;
-          const reserveCalls=stage==='gather'||stage==='followup'?2:stage==='synthesize'?0:1;
-          const request={inputTokens:estimate,maxOutputTokens,pendingOutputTokens,reserveCalls,reserveOutputTokens:stage==='synthesize'?0:finalOutputReserve()};
+          const lastAssessment=stage==='assess'&&job.attemptedCalls>=job.limits.maxCalls;
+          const reserveCalls=stage==='gather'||stage==='followup'?2:stage==='synthesize'||lastAssessment?0:1;
+          const request={inputTokens:estimate,maxOutputTokens,pendingOutputTokens,reserveCalls,reserveOutputTokens:stage==='synthesize'||lastAssessment?0:finalOutputReserve()};
           job=firstGeneration?await checkResearchModelBudget(jobId,token,request):await reserveResearchCall(jobId,token,request);
           firstGeneration=false;stageInputEstimate=estimate;pendingOutputTokens+=maxOutputTokens;
           logResearchEvent({jobId,event:'model-call',stage,attempt:job.attemptedCalls,inputBytes,maxOutputTokens});
@@ -115,7 +118,7 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
 export async function runWorker(options: { purchaseId?: string; userId?: string } = {}) {
   const configured = workerConfigured();
   const count = Math.max(1, Math.min(2, Number(process.env.RESEARCH_MAX_JOBS) || 1));
-  const deadline = Date.now() + 200000;
+  const deadline = Date.now() + 270000;
   let processed = 0, failed = 0, pending = 0;
   const { queue, observations } = await getResearchQueue({ ...options, limit: 20 });
   if (configured) for (const purchase of queue.filter(p => p.status === 'queued')) await ensureResearchJob(purchase.id, purchase.userId);

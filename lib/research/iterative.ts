@@ -5,6 +5,7 @@ import {readSourcePages,sourcePageKind,type ReadSource} from './source-reader';
 import {listingApiSnapshots,mergeSourceSnapshots} from './api-evidence';
 import type {ProductObservation} from './product-tools';
 import {stageOutputTokens} from './output-budget';
+import {ledgerResearchDraft} from './ledger-report';
 import {CLAIM_ASSESSMENT_SCHEMA,CLAIM_ASSESSMENT_INSTRUCTIONS,validateClaimAssessment,applyClaimLedger,requiredPlanCriteria,ambiguousExactVariant} from './claims';
 
 // Persisted stage envelopes have heterogeneous, runtime-validated contracts.
@@ -12,6 +13,7 @@ import {CLAIM_ASSESSMENT_SCHEMA,CLAIM_ASSESSMENT_INSTRUCTIONS,validateClaimAsses
 type Json = Record<string, any>;
 export type ResearchStage = 'plan' | 'gather' | 'read' | 'assess' | 'followup' | 'synthesize' | 'verify' | 'publish';
 export type ResearchStageContext = { purchase: Json; outputs: Json; referenceDate: string; history?: Json[];
+  finalizeWithoutModel?:boolean;
   beforeProvider?: (request:ProviderRequest)=>Promise<void>;
   beforeModelCall?:(inputBytes:number,maxOutputTokens:number)=>Promise<void>;
   onModelUsage?:(usage:ResearchUsage)=>Promise<void>;
@@ -207,6 +209,17 @@ export async function runResearchStage(stage: ResearchStage, context: ResearchSt
     return {output:assessed,nextStage:!assessed.sufficient && rounds.length<3?'followup':'synthesize',usage:answer.usage};
   }
   if (stage!=='synthesize') throw new Error('Unknown research stage.');
+  if(context.finalizeWithoutModel){
+    const ledger=outputs.assess?.claimLedger;
+    if(!ledger)throw new Error('Validated assessment is required for final rendering.');
+    const draft=ledgerResearchDraft(ledger,brief,outputs.plan);
+    const constrained=applyClaimLedger(draft,ledger,brief);
+    const ledgerUrls=new Set<string>(draft.products.flatMap(product=>product.sources.map(source=>source.url)));
+    const report:Json=normalizeResearch(constrained,ledgerUrls,purchase,context.referenceDate);
+    for(const product of report.products)product.claimEvidence=constrained.products.find((candidate:Json)=>candidate.name===product.name&&candidate.variant===product.variant)?.claimEvidence;
+    report.researchGaps=[...new Set([...(outputs.assess?.gaps||[]),...(constrained.researchGaps||[]),'The final comparison was rendered from the validated ledger without another model call.'])].slice(0,30);
+    return {output:{draft:constrained,report,parsed:report.parsed},nextStage:'verify'};
+  }
   const answer=await ask({instructions:`${RULES}\nSynthesize a ranked report using ONLY the validated source claim ledger. Discovery notes are not evidence. Strictly match product/model/storage SKU to source identity. Put only direct exact retail listings into offers; no news, tracker, category, accessory-only, foreign-market or incompatible-SKU offers. An offer.price is the base product price explicitly supported at that URL, never a guessed full kit total. Unknown accessory prices and costs remain unknown; final totals are validated separately. Pros, cons, fit and verdict must follow supported ledger statements and quote references. Keep missing external evidence in researchGaps; ask the user only about genuine ambiguity in their brief. Explain #1 using the user's hard requirements and explicit preferences only; never pad. Research summary must acknowledge missing coverage and contradictory reviews.`,
     input:{context:base,plan:outputs.plan,assessment:{gaps:outputs.assess?.gaps,claimLedger:outputs.assess?.claimLedger},allowedSources:sources.map(source=>({url:source.url,title:source.title}))},schema:RESEARCH_SCHEMA});
   const audited=auditResearchDraft(JSON.parse(answer.text),sources,purchase);

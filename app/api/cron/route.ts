@@ -1,7 +1,7 @@
 import { cronAuthorized, runWorker } from '@/lib/worker';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 240;
+export const maxDuration = 300;
 export async function GET(request: Request) {
   if (!process.env.CRON_SECRET || process.env.CRON_SECRET.length < 32) return Response.json({ error: 'Scheduler is not configured.' }, { status: 503 });
   if (!cronAuthorized(request)) return Response.json({ error: 'Unauthorized.' }, { status: 401 });

@@ -5,7 +5,7 @@ import { runWorker, workerConfigured } from '@/lib/worker';
 import { ensureResearchJob, getResearchJob, researchJobDTO, cancelResearchJob, retryResearchJob, ResearchJobError } from '@/lib/research-jobs';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 240;
+export const maxDuration = 300;
 const noCache = { 'Cache-Control': 'no-store' };
 function validId(id: unknown): id is string { return typeof id === 'string' && id.length > 0 && id.length <= 100; }
 async function owned(id: string, userId: string) { return db().prepare('SELECT id,status FROM purchases WHERE id=? AND user_id=?').bind(id, userId).first(); }

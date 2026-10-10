@@ -113,7 +113,7 @@ export class AdkVertexModel extends BaseLlm {
     const env=this.options.env||process.env,endpoint=adkVertexEndpoint(env);
     const signal=AbortSignal.any([this.options.signal,...(abortSignal?[abortSignal]:[]),...(request.config?.abortSignal?[request.config.abortSignal]:[])]);
     if(signal.aborted)throw new ResearchProviderError('Research was interrupted.','INTERRUPTED',true);
-    const maxOutputTokens=request.config?.maxOutputTokens??this.options.maxOutputTokens??6000;
+    const maxOutputTokens=request.config?.maxOutputTokens??this.options.maxOutputTokens??ADK_MODEL_LIMITS.maxOutputTokens;
     if(!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<1||maxOutputTokens>ADK_MODEL_LIMITS.maxOutputTokens)throw new ResearchProviderError('Research output token configuration is invalid.','INVALID_INPUT');
     const body=JSON.stringify(requestBody(request,maxOutputTokens)),inputBytes=Buffer.byteLength(body);
     if(inputBytes>ADK_MODEL_LIMITS.inputBytes)throw new ResearchProviderError('Research input exceeded its size limit.','INVALID_INPUT');

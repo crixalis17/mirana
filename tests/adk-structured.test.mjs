@@ -8,7 +8,7 @@ const schema={type:'object',properties:{category:{type:'string',minLength:1,maxL
 const request={instructions:'Assess the exact stage contract; {literal} is part of the instruction.',input:{brief:'A quiet laptop'},schema};
 const response=(text,finishReason='STOP')=>Response.json({candidates:[{content:{role:'model',parts:[{text:'private model thought',thought:true},{text}]},finishReason}],usageMetadata:{promptTokenCount:11,candidatesTokenCount:7,thoughtsTokenCount:5}});
 let reservations=0,dispatches=0;
-const result=await researchAdkStructuredRequest({...request,beforeModelCall:async(bytes,max)=>{assert.ok(bytes>0);assert.equal(max,6000);reservations++;}},signal,{env,fetch:async(target,init)=>{
+const result=await researchAdkStructuredRequest({...request,beforeModelCall:async(bytes,max)=>{assert.ok(bytes>0);assert.equal(max,65536);reservations++;}},signal,{env,fetch:async(target,init)=>{
  dispatches++;
  assert.equal(target,'https://aiplatform.googleapis.com/v1/projects/mirana-structured-fixture/locations/global/publishers/google/models/gemini-3.8-flash:generateContent');
  const body=JSON.parse(init.body);

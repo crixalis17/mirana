@@ -174,5 +174,21 @@ try {
     return {...await runner(stage,context),usage:observed};
   });
   assert.equal((await meteredPayload()).outputTokens,24);
+  // The final model call can assess evidence; rendering the validated ledger
+  // then completes without resetting counters or making a ninth generation.
+  process.env.RESEARCH_MAX_CALLS='4';const lastCall=await create('last-assessment-call');delete process.env.RESEARCH_MAX_CALLS;
+  const lastLease=await jobs.claimResearchJob(lastCall.id);
+  await jobs.reserveResearchCall(lastCall.id,lastLease.token);await jobs.completeResearchStep(lastCall.id,lastLease.token,'plan',{},'gather');
+  await jobs.reserveResearchCall(lastCall.id,lastLease.token);await jobs.completeResearchStep(lastCall.id,lastLease.token,'gather',{},'assess');
+  await jobs.reserveResearchCall(lastCall.id,lastLease.token);await jobs.releaseResearchJob(lastCall.id,lastLease.token);
+  let renderedWithoutModel=false;
+  assert.equal((await runResearchJob(lastCall.id,{},async(stage,context)=>{
+    if(['plan','gather','assess'].includes(stage))await context.beforeModelCall(100,200);
+    const result=await runner(stage,context);
+    if(stage==='assess')result.output.claimLedger={candidates:[],gaps:['No supported exact variant']};
+    if(stage==='synthesize'){renderedWithoutModel=context.finalizeWithoutModel;delete result.usage;}
+    return result;
+  })).status,'completed');
+  assert.equal(renderedWithoutModel,true);assert.equal((await jobs.getResearchJob('last-assessment-call','owner')).limits.attemptedCalls,4);
   console.log('PASS: worker checkpoints/crash resume, bounded research, prior report retention, in-flight cancellation, concurrent dispatch, atomic publication fencing, brief/alert edits, authenticated API ownership, token usage retained across failure without double counting; no network or email');
 }finally{globalThis.fetch=originalFetch;delete globalThis.__miranaResearchTestAfter;client?.close();await rm(directory,{recursive:true,force:true});for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
