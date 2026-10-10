@@ -29,6 +29,18 @@ const quote=api.bodyText;
 const candidate={name:'Acme Book14',variant:'16GB RAM 512GB SSD',hardRequirements:[],comparisonClaims:[{text:'Measured battery 8 hours',kind:'measurement',...proof(quote)}],mandatoryAccessories:[],productPrice:{value:45000,...proof(quote)},condition:{value:'new',...proof(quote)},currentAvailability:{value:'in_stock',...proof(quote)}};
 const context={brief:{requestText:'New laptop',condition:'New only',budget:55000,topN:3},plan:{hardRequirements:[],requiredAccessories:[]},referenceDate:date,sources:[api]};
 const validate=(source=api,item=candidate)=>validateClaimAssessment({candidates:[item],gaps:[],followupQuestions:[],sufficient:true},{...context,sources:[source]}).candidates[0];
+const pageBody=`${title} supports a quiet keyboard.`;
+const page={...direct,bodyText:pageBody,paragraphs:[pageBody],contentHash:hash(pageBody)};
+const complementary=mergeSourceSnapshots([page],[api]);
+assert.equal(complementary.length,2,'Page text and exact API fields must both survive at the same URL');
+const mixedCandidate={...candidate,comparisonClaims:[{text:'Supports a quiet keyboard',kind:'specification',...proof(pageBody)}]};
+for(const sources of [complementary,[...complementary].reverse()]){
+ const mixed=validateClaimAssessment({candidates:[mixedCandidate],gaps:[],followupQuestions:[],sufficient:true},{...context,sources}).candidates[0];
+ assert.equal(mixed.productPrice,45000,'API price remains available when page text has no price');
+ assert.equal(mixed.productPriceEvidence.contentHash,api.contentHash);
+ assert.equal(mixed.comparisonClaims[0].evidence.contentHash,page.contentHash,'Each proof selects the exact source representation containing its quote');
+ assert.equal(mixed.comparisonClaims[0].status,'supported');
+}
 const accepted=validate();assert.equal(accepted.productPrice,45000);assert.equal(accepted.condition,'new');assert.equal(accepted.currentAvailability,'in_stock');
 assert.equal(accepted.eligibility.provisional,true);assert.equal(accepted.eligibility.checkoutVerified,false);assert.equal(accepted.comparisonClaims[0].status,'unknown');
 assert.equal(accepted.productPriceEvidence.provenance.provider,'brightdata');

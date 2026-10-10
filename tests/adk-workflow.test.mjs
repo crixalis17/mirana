@@ -29,7 +29,7 @@ let client,jobs,mode='normal',activePurchaseId='',modelCalls=0,toolCalls=0,sourc
 const dispatchedBodies=[],assessmentInputs=[];
 try{
   for(const key of keys)delete process.env[key];
-  Object.assign(process.env,{NODE_ENV:'test',RESEARCH_PROVIDER:'vertex',RESEARCH_TOOLS_ENABLED:'true',GOOGLE_API_KEY:'isolated-fake-google-key',
+  Object.assign(process.env,{NODE_ENV:'test',RESEARCH_PROVIDER:'vertex',RESEARCH_TOOLS_ENABLED:'true',RESEARCH_RETRIEVAL_MODE:'agent',GOOGLE_API_KEY:'isolated-fake-google-key',
     GOOGLE_CLOUD_PROJECT:'mirana-adk-fixture',GEMINI_RESEARCH_MODEL:'gemini-3.8-flash',SERPAPI_API_KEY:'isolated-fake-serp-key',
     TURSO_DATABASE_URL:`file:${join(directory,'workflow.db')}`,APP_ORIGIN:'http://127.0.0.1:5176',AUTH_PREVIEW_MODE:'false',
     TAVILY_ACCESS_MODE:'disabled',FIRECRAWL_ACCESS_MODE:'disabled',RESEARCH_LOG_LEVEL:'off',RESEARCH_STEP_TIMEOUT_MS:'10000'});

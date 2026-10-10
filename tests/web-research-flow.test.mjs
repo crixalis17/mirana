@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
 registerHooks({resolve(s,c,next){try{return next(s,c);}catch(e){if(s.startsWith('.'))return next(`${s}.ts`,c);throw e;}}});
 const {runResearchStage}=await import('../lib/research/iterative.ts');
-const env={NODE_ENV:'test',RESEARCH_PROVIDER:'vertex',RESEARCH_TOOLS_ENABLED:'true',GOOGLE_API_KEY:'fixture-google-key',GOOGLE_CLOUD_PROJECT:'mirana-tool-fixture',GEMINI_RESEARCH_MODEL:'gemini-3.8-flash',TAVILY_ACCESS_MODE:'keyless',FIRECRAWL_ACCESS_MODE:'keyless',VERCEL:''};
+const env={NODE_ENV:'test',RESEARCH_PROVIDER:'vertex',RESEARCH_TOOLS_ENABLED:'true',RESEARCH_RETRIEVAL_MODE:'agent',GOOGLE_API_KEY:'fixture-google-key',GOOGLE_CLOUD_PROJECT:'mirana-tool-fixture',GEMINI_RESEARCH_MODEL:'gemini-3.8-flash',TAVILY_ACCESS_MODE:'keyless',FIRECRAWL_ACCESS_MODE:'keyless',VERCEL:''};
 const saved=Object.fromEntries(Object.keys(env).map(k=>[k,process.env[k]])),originalFetch=globalThis.fetch;
 const url='https://www.samsung.com/in/tablets/galaxy-tab-s/acme-fixture',title='Acme Slate 128GB WiFi',date=new Date().toISOString();
 const literal=`${title}. New condition. In stock. Item price INR 45000. Supports palm rejection and handwritten note taking.`;

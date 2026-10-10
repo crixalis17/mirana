@@ -12,7 +12,7 @@ export const workerConfigured = researchProviderConfigured;
 const billableStages = new Set(['plan', 'gather', 'assess', 'followup', 'synthesize']);
 type StageRunner = typeof runResearchStage;
 type JobOptions = { deadline?: number; maxSteps?: number };
-function stepTimeout() { return Math.max(10000, Math.min(240000, Number(process.env.RESEARCH_STEP_TIMEOUT_MS) || 120000)); }
+function stepTimeout() { return Math.max(10000, Math.min(240000, Number(process.env.RESEARCH_STEP_TIMEOUT_MS) || 240000)); }
 
 // HTTP callers cannot replace the stage runner; injection supports isolated worker tests.
 export async function runResearchJob(jobId: string, options: JobOptions = {}, runner: StageRunner = runResearchStage) {
@@ -46,23 +46,25 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
         return { status: 'completed', steps };
       }
       const finalizeWithoutModel=stage==='synthesize' && job.attemptedCalls>=job.limits.maxCalls && !!job.outputs.assess?.claimLedger;
-      const billable = billableStages.has(stage) && !finalizeWithoutModel;
+      const controlledRetrieval=['gather','followup'].includes(stage)&&process.env.RESEARCH_PROVIDER==='vertex'&&process.env.RESEARCH_TOOLS_ENABLED==='true'&&process.env.RESEARCH_RETRIEVAL_MODE!=='agent';
+      const billable = billableStages.has(stage) && !finalizeWithoutModel && !controlledRetrieval;
       if (Date.now() + (billable ? stepTimeout() + 10000 : 50000) > deadline) break;
       const observations = await db().prepare('SELECT payload FROM observations WHERE purchase_id=?').bind(job.purchaseId).all();
       let firstGeneration=true,pendingOutputTokens=0,stageInputEstimate=0,usageRecorded=false;
       const input = { purchase: job.purchase, outputs: job.outputs, referenceDate: job.referenceDate,
+        retrievalAllowance:Math.max(0,job.limits.maxToolCalls-job.attemptedToolCalls),
         finalizeWithoutModel,
         history: observations.results.map(row => JSON.parse(String(row.payload))).slice(-40),
         beforeProvider:async(request:ProviderRequest)=>{job=await checkResearchInputBudget(jobId,token,
           Buffer.byteLength(JSON.stringify(request.input))+Buffer.byteLength(request.instructions)+6000);},
         beforeModelCall:async(inputBytes:number,maxOutputTokens:number)=>{
-          if(!billable||!Number.isSafeInteger(inputBytes)||inputBytes<0||!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<=0)throw new Error('Invalid research generation budget.');
+          if((!billable&&!controlledRetrieval)||!Number.isSafeInteger(inputBytes)||inputBytes<0||!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<=0)throw new Error('Invalid research generation budget.');
           // Bytes conservatively bound tokens, including returned tool observations.
           const estimate=stageInputEstimate+inputBytes;
           const lastAssessment=stage==='assess'&&job.attemptedCalls>=job.limits.maxCalls;
           const reserveCalls=stage==='gather'||stage==='followup'?2:stage==='synthesize'||lastAssessment?0:1;
           const request={inputTokens:estimate,maxOutputTokens,pendingOutputTokens,reserveCalls,reserveOutputTokens:stage==='synthesize'||lastAssessment?0:finalOutputReserve()};
-          job=firstGeneration?await checkResearchModelBudget(jobId,token,request):await reserveResearchCall(jobId,token,request);
+          job=firstGeneration&&billable?await checkResearchModelBudget(jobId,token,request):await reserveResearchCall(jobId,token,request);
           firstGeneration=false;stageInputEstimate=estimate;pendingOutputTokens+=maxOutputTokens;
           logResearchEvent({jobId,event:'model-call',stage,attempt:job.attemptedCalls,inputBytes,maxOutputTokens});
         },

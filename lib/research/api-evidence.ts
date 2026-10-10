@@ -43,12 +43,15 @@ export function listingApiSnapshots(observations:ProductObservation[]):ReadSourc
 }
 
 // Prefer actual readable evidence across rounds. A failed later read must not
-// erase an earlier snapshot. Original text takes precedence over API projection.
+// erase an earlier snapshot. Keep page text and API projection separately so
+// complementary evidence from the same listing survives with its own provenance.
 export function mergeSourceSnapshots(pages:ReadSource[],apiSources:ReadSource[],maxSources:number=SOURCE_READER_LIMITS.maxSources):ReadSource[]{
   const chosen=new Map<string,ReadSource>();
   const rank=(source:ReadSource)=>source.accessStatus==='read'&&source.bodyText?(source.textTrust==='untrusted-original-page'?2:1):0;
   for(const source of [...pages,...apiSources]){
-    const key=allowedProductUrl(source.url,true)||source.url,existing=chosen.get(key);
+    const url=allowedProductUrl(source.url,true)||source.url;
+    const representation=source.textTrust==='untrusted-provider-api-json'?'api':'page';
+    const key=`${url}|${representation}`,existing=chosen.get(key);
     if(!existing||rank(source)>rank(existing)||rank(source)===rank(existing)&&Date.parse(source.retrievedAt)>=Date.parse(existing.retrievedAt))chosen.set(key,source);
   }
   const selected=[...chosen.values()].sort((a,b)=>rank(b)-rank(a)).slice(0,maxSources);

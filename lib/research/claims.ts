@@ -67,8 +67,9 @@ function sourceQuote(source:IndependentClaimSource,input:unknown):QuoteProof|nul
   return {sourceId:createHash('sha256').update(url).digest('hex').slice(0,24),url,contentHash:hash,start,end,
     quote:body.slice(start,end),retrievedAt:source.retrievedAt,publishedAt:source.publishedAt||null,...(api||extracted?{provenance:source.provenance}:{})};
 }
-function proofFor(value:Json,sources:Map<string,IndependentClaimSource>,name:string,variant:string,referenceDate:string,exact=true){
-  const source=sources.get(key(value?.sourceUrl)||'');if(!source)return null;
+type ClaimSources=Map<string,IndependentClaimSource[]>;
+function sourceForProof(sources:ClaimSources,proof:QuoteProof|null){return proof?sources.get(proof.url)?.find(source=>source.contentHash===proof.contentHash&&source.retrievedAt===proof.retrievedAt):undefined;}
+function proofForSource(value:Json,source:IndependentClaimSource,name:string,variant:string,referenceDate:string,exact=true){
   const proof=sourceQuote(source,value?.quote);if(!proof)return null;
   const date=Date.parse(referenceDate);if(!Number.isFinite(date)||Date.parse(proof.retrievedAt)>date+86400000)return null;
   if(proof.publishedAt&&(!Number.isFinite(Date.parse(proof.publishedAt))||Date.parse(proof.publishedAt)>date+86400000))return null;
@@ -82,6 +83,10 @@ function proofFor(value:Json,sources:Map<string,IndependentClaimSource>,name:str
   }
   if(exact&&conflictingVariant(proof.quote,variant))return null;
   return proof;
+}
+function proofFor(value:Json,sources:ClaimSources,name:string,variant:string,referenceDate:string,exact=true){
+  for(const source of sources.get(key(value?.sourceUrl)||'')||[]){const proof=proofForSource(value,source,name,variant,referenceDate,exact);if(proof)return proof;}
+  return null;
 }
 function numbers(value:string):string[]{return value.replace(/,/g,'').match(/\d+(?:\.\d+)?/g)||[];}
 function numericSupport(statement:string,quote:string){const supported=new Set(numbers(quote));const units=statement.toLowerCase().match(/\d+(?:\.\d+)?\s*(?:hours?|hrs?|hz|khz|kg|db|watts?|w|mah|gb|tb)\b/g)||[];
@@ -143,7 +148,8 @@ export function requiredPlanCriteria(brief:Json,plan:Json={}) {
 }
 function sameRequirement(a:string,b:string){return normalized(a).toLowerCase()===normalized(b).toLowerCase();}
 export function validateClaimAssessment(raw:Json,context:ClaimContext) {
-  const sources=new Map(context.sources.slice(0,40).map(s=>[key(s.url),s]).filter(([url])=>!!url) as [string,IndependentClaimSource][]);
+  const sources:ClaimSources=new Map();
+  for(const source of context.sources.slice(0,40)){const url=key(source.url);if(url)sources.set(url,[...(sources.get(url)||[]),source]);}
   const required=requiredPlanCriteria(context.brief,context.plan),candidates:Json[]=[],gaps:string[]=[];
   let proofCount=0;
   const check=(value:Json,name:string,variant:string,exact=true)=>{if(proofCount>=64)return null;const proof=proofFor(value,sources,name,variant,context.referenceDate,exact);if(proof)proofCount++;return proof;};
@@ -171,7 +177,7 @@ export function validateClaimAssessment(raw:Json,context:ClaimContext) {
     }
     for(const input of records(item.comparisonClaims,20)){
       const text=clean(input.text,500),proof=check(input,name,variant);let kind:ClaimKind=['specification','measurement','opinion','anecdote'].includes(input.kind)?input.kind:'opinion';
-      const source=proof?sources.get(proof.url):undefined;
+      const source=sourceForProof(sources,proof);
       let status:ClaimStatus=proof&&numericSupport(text,proof.quote)&&literalComparison(text,proof.quote)?'supported':'unknown';
       if(kind==='measurement'&&(!source||source.textTrust!=='untrusted-original-page'||!['review','owner'].includes(source.sourceKind)||!/\b(test(?:ed|ing)?|measur(?:ed|ement)|methodology|protocol|lab|brightness|workload)\b/i.test(proof?.quote||'')))status='unknown';
       if(source?.sourceKind==='owner'&&kind!=='anecdote'){kind='anecdote';if(input.kind==='measurement')status='unknown';}
@@ -182,7 +188,7 @@ export function validateClaimAssessment(raw:Json,context:ClaimContext) {
       const compatibilityProof=check(input.compatibility||{},name,variant),priceProof=check(input.price||{},accessoryName,'',false);
       let compatibility:ClaimStatus=compatibilityProof&&identityWords(accessoryName).every(w=>words(compatibilityProof.quote).includes(w))&&['supported','contradicted'].includes(input.compatibility?.status)?input.compatibility.status:'unknown';
       if(compatibilityProof&&compatibility!=='unknown'&&/\b(?:incompatible|not compatible|not supported)\b/i.test(compatibilityProof.quote))compatibility='contradicted';
-      const priceSource=priceProof?sources.get(priceProof.url):undefined;
+      const priceSource=sourceForProof(sources,priceProof);
       const accessoryIdentity=priceProof&&identityWords(accessoryName).every(w=>words(`${priceSource?.title||''} ${priceProof.quote}`).includes(w));
       const bundledIdentity=input.price?.value!==0||priceProof&&containsIdentity(priceProof.quote,name,variant);
       const value=accessoryIdentity&&bundledIdentity&&sourceIsCurrentListing(priceSource,priceProof,context.referenceDate)&&priceSupported(input.price?.value,priceProof,true)?input.price.value:null;
@@ -195,9 +201,9 @@ export function validateClaimAssessment(raw:Json,context:ClaimContext) {
     for(const expected of expectedAccessories)if(!accessories.some(a=>a.required&&(sameRequirement(a.requirement,String(expected))||sameRequirement(a.name,String(expected))))){
       accessories.push({name:clean(expected,150),required:true,compatibility:'unknown',status:'unknown',price:null,compatibilityEvidence:null,priceEvidence:null});provisional=true;clarifications.push(`Required accessory needs evidence: ${clean(expected,150)}`);
     }
-    const productProof=check(item.productPrice||{},name,variant),productSource=productProof?sources.get(productProof.url):undefined;
+    const productProof=check(item.productPrice||{},name,variant),productSource=sourceForProof(sources,productProof);
     const productPrice=sourceIsCurrentListing(productSource,productProof,context.referenceDate)&&priceSupported(item.productPrice?.value,productProof)?item.productPrice.value:null;
-    const conditionProof=check(item.condition||{},name,variant),conditionSource=conditionProof?sources.get(conditionProof.url):undefined;
+    const conditionProof=check(item.condition||{},name,variant),conditionSource=sourceForProof(sources,conditionProof);
     const conditionCurrent=sourceIsCurrentListing(conditionSource,conditionProof,context.referenceDate,true);
     let condition=conditionCurrent&&['new','refurbished','used'].includes(item.condition?.value)?item.condition.value:'unknown';
     if(conditionCurrent&&conditionProof&&/\bcondition["\s]*:["\s]*(refurbished|renewed)\b/i.test(conditionProof.quote))condition='refurbished';
@@ -207,7 +213,7 @@ export function validateClaimAssessment(raw:Json,context:ClaimContext) {
     if(condition==='used'&&!/\b(used|pre.owned|second.hand)\b/i.test(conditionProof!.quote))condition='unknown';
     if(['used','refurbished'].includes(condition)&&/new/i.test(String(context.brief.condition||''))){blocked=true;reasons.push('The quoted item condition contradicts the new-only requirement.');}
     if(condition==='unknown'){provisional=true;clarifications.push('New condition is not independently established.');}
-    const availabilityProof=check(item.currentAvailability||{},name,variant),availabilitySource=availabilityProof?sources.get(availabilityProof.url):undefined;
+    const availabilityProof=check(item.currentAvailability||{},name,variant),availabilitySource=sourceForProof(sources,availabilityProof);
     let availability=availabilityProof&&['in_stock','out_of_stock'].includes(item.currentAvailability?.value)?item.currentAvailability.value:'unknown';
     if(availabilityProof&&sourceIsCurrentListing(availabilitySource,availabilityProof,context.referenceDate,true)&&/\b(out of stock|outofstock|sold out)\b/i.test(availabilityProof.quote))availability='out_of_stock';
     if(availability==='in_stock'&&(!sourceIsCurrentListing(availabilitySource,availabilityProof,context.referenceDate)||!/\b(in stock|instock|available now)\b/i.test(availabilityProof!.quote)))availability='unknown';

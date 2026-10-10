@@ -1,0 +1,31 @@
+# Controlled retrieval migration — local verification
+
+The research worker now routes discovery through `lib/research/retrieval.ts` by default. Gemini 3.8 Flash with HIGH thinking interprets the brief, assesses attributable evidence and synthesizes the comparison. It does not select provider functions during healthy retrieval.
+
+## Retrieval contract
+
+- Planning may return up to eight short `retrievalTerms`. Code accepts only terms literally present in the user's brief, identity or custom tags. It rejects invented generations and unrelated instructions. The optional field keeps saved plans compatible.
+- Code independently covers official stores, Amazon India, Flipkart, professional reviews and owner feedback. Firecrawl handles merchant/official search and preferred page extraction; Tavily handles review/owner discovery and extraction fallback. SerpApi adds shopping leads. Configured Bright Data cross-checks exact merchant records. Configured Keepa supplies historical observations only when an exact ASIN and operation allowance remain.
+- Merchant URLs are canonicalized and deduplicated by exact Amazon ASIN or Flipkart listing identity. Search/category links and Google Shopping result pages cannot become confirmed offers. Observed links can provide additional leads; code never fabricates IDs.
+- Literal title contradictions and accessory-only hits do not occupy main-product slots. Unspecified attributes remain optional. Requested dimensions affect retrieval priority, not eligibility. Full indexed pages are not excluded merely because their related-product carousels mention an unwanted feature.
+- Page text and API projections for the same listing both survive source merging. Claim validation selects the exact representation containing its quote and retains its hash, timestamp and provenance. Structured listing fields, timestamps, hashes and provider provenance remain separate. Missing current price is unknown; MRP, discount arithmetic and carousel prices cannot replace it. Exact variant, seller, condition and postcode checkout remain subject to the existing claim validation and verifier.
+- Healthy gathering and follow-up make zero model generations. Gemini receives the structured retrieval record and validated source bodies in the assessment stage. All configured external discovery must fail to yield approved evidence before Google Search is exposed alone as the final resort. Exhausting operations does not unlock Google.
+- New controlled jobs allow 24 provider operations by default, with 20 reserved for initial retrieval and remaining operations for follow-up. Saved jobs retain their original counters and limits. No new evidence allowance means no repeated assessment loop. Every operation reserves its durable counter before dispatch; lease/cancellation/budget failures propagate.
+
+## Local case and verification
+
+The test uses the original narrative: Apple Watch, black finish, GPS only, prefer 42 mm or the smallest size, new condition, maximum complete unconditional INR 40,000, postcode 600019, no bank cards, up to three candidates. No Series 11 constraint or known Amazon URL is supplied. Alerts remain off.
+
+The localhost preview uses an isolated SQLite database at `/private/tmp/mirana-controlled.db`. Production and previous local records are preserved. WebMCP adds/edits the brief, starts research and reads progress/report. The evidence API correctly refuses anonymous development identity; operator audit reads only the isolated test database and safe server logs instead of bypassing production authentication.
+
+Initial local run `f0e84390e872afbfa6f4a1bedd9cce08d5e364bdb169019245c9a8cd469cd742` completed with a provisional 46 mm Series 11 and no confirmed price. It exposed query, exclusion, accessory and exhausted-follow-up issues corrected in this iteration.
+
+Second run `d0de04c26094c9f032118c12376225d1fe7929f13bc6227173c3f56007c89aee` retrieved 40 leads and more source coverage but was interrupted by the old 120-second local default. Saved evidence is preserved. Local configuration and the worker default now match the 240-second model-stage setting; platform/worker duration constraints still exist.
+
+Final run `7171ce6ee77e5eac034ae25be7944eb1c664d1516d9eda5c86030f7a0a6d9ff8` independently discovered Amazon ASIN `B0FQG8R2XW`: Series 11 GPS 42 mm Jet Black with Black Sport Band M/L, with Bright Data reporting INR 34,499. It also retrieved the Flipkart Series 10 GPS 42 mm Jet Black listing at INR 34,999. Planning terms were only `black`, `GPS`, `42 mm`; the known Amazon reference and generation were not supplied. The job completed and WebMCP verified that the published #1 is the exact Amazon 42 mm Jet Black GPS variant at INR 34,499, sourced to the Bright Data field projection. It used four model generations and 24 provider operations. Google fallback was not used. Alerts remained off.
+
+This validates discovery and the primary listing, not a complete deep-research comparison: the published report has sparse review-backed pros/cons, a provisional 46 mm alternative with unknown price, and an unverified exclusion of Series 10. The claim validator rejected ambiguous price quotes for the alternatives rather than publishing their model-proposed prices. Condition, postcode checkout, full cost and owner feedback remain unresolved. Improve candidate-specific review coverage and alternative assessment before production promotion.
+
+All 30 regression suites, TypeScript, focused lint and optimized Next.js build passed, including a subsequent fix retaining page/API evidence at one URL and binding each claim to its exact snapshot. The controlled suite covers real provider routing, absence of model-selected functions, required search coverage, exact listing extraction, provenance, deduplication, explicit exclusions, accessory rejection, optional attributes, bounded reservations, lease propagation and Google-only final fallback after external failure.
+
+No production deployment has been made for this migration. Before deployment, set `RESEARCH_MAX_TOOL_CALLS=24`, `RESEARCH_RETRIEVAL_MODE=controlled` and `RESEARCH_STEP_TIMEOUT_MS=240000` on the target environment. Keep credentials server-side. No email sender or independent checkout verifier was added or claimed verified.

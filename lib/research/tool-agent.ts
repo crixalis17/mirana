@@ -19,7 +19,7 @@ export type ResearchToolTrace = {tool:string;provider:string;status:'ok'|'unavai
 export type McpEvidenceSource = {url:string;retailerUrl:string|null;provider:'serpapi-mcp'|'brightdata-mcp';tool:string;bodyText:string;contentHash:string;retrievedAt:string;textTrust:'untrusted-provider-mcp';evidenceKind:'search-result'|'page-extraction'};
 export type ToolAgentDiagnostics = {runtime:'google-adk';toolCalls:ResearchToolTrace[];apiSources:ProductApiSource[];observations:ProductObservation[];originalSources:ReadSource[];mcpSources:McpEvidenceSource[];readiness:ReturnType<typeof productToolsConfigured> & ReturnType<typeof webToolsConfigured> & {serpapiMcp:boolean;brightdataMcp:boolean};limitations:string[];modelCalls:number;budgetExhausted:boolean};
 export type ToolAgentAnswer = ProviderAnswer & {diagnostics:ToolAgentDiagnostics};
-export type ToolAgentOptions = {env?:AgentEnv;fetch?:typeof fetch;maxSteps?:number;maxOutputTokens?:number;
+export type ToolAgentOptions = {env?:AgentEnv;fetch?:typeof fetch;maxSteps?:number;maxOutputTokens?:number;nativeOnly?:boolean;
   beforeModelCall?:(inputBytes:number,maxOutputTokens:number)=>Promise<void>;
   beforeToolCall?:(provider:string,tool:string)=>Promise<void>;
   onModelUsage?:(usage:ResearchUsage)=>Promise<void>;
@@ -236,6 +236,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
       onModelUsage:async(stepUsage)=>{usage.inputTokens+=stepUsage.inputTokens;usage.outputTokens+=stepUsage.outputTokens;
         usage.thinkingTokens+=stepUsage.thinkingTokens;
         try{await options.onModelUsage?.(stepUsage);}catch(error){gateError=error;throw error;}}});
+    if(options.nativeOnly)for(const name of Object.keys(tools))if(name!=='google_search')delete tools[name];
     const agent=new LlmAgent({name:'mirana_researcher',model,tools:Object.values(tools),instruction:()=>instructions,
       disallowTransferToParent:true,disallowTransferToPeers:true,generateContentConfig:{maxOutputTokens:outputTokens},
       beforeModelCallback:({request:modelRequest})=>{if(gateError)throw gateError;signal.throwIfAborted();

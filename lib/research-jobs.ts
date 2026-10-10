@@ -21,7 +21,7 @@ export function canonicalResearchBrief(brief: RecordValue) {
 export function researchBriefHash(brief: RecordValue) {return createHash('sha256').update(JSON.stringify(canonicalResearchBrief(brief))).digest('hex');}
 function revision(brief: RecordValue) {return typeof brief.briefRevision==='number' && Number.isSafeInteger(brief.briefRevision) && brief.briefRevision >= 0 ? brief.briefRevision : 0;}
 function bound(name: string, fallback: number, maximum: number) {const value=Number(process.env[name]); return Number.isInteger(value)&&value>0 ? Math.min(value,maximum) : fallback;}
-function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',12,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',process.env.RESEARCH_TOOLS_ENABLED==='true'?196608:24000,196608)};}
+function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',process.env.RESEARCH_RETRIEVAL_MODE==='agent'?12:24,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',process.env.RESEARCH_TOOLS_ENABLED==='true'?196608:24000,196608)};}
 const leaseMs=360000;
 const now=()=>new Date().toISOString();
 function event(stage: ResearchStage, message: string) {return {id:randomUUID(),at:now(),stage,message};}

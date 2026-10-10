@@ -87,6 +87,10 @@ export async function researchProviderRequest(request: ProviderRequest, signal: 
   const provider = (process.env.RESEARCH_PROVIDER || 'openai') as 'openai' | 'vertex';
   if(provider==='vertex'&&process.env.RESEARCH_TOOLS_ENABLED==='true'){
     if(request.search){
+      if(process.env.RESEARCH_RETRIEVAL_MODE!=='agent'){
+        const {retrieveResearchEvidence}=await import('./retrieval');
+        return retrieveResearchEvidence(request,signal);
+      }
       const {researchToolAgentRequest}=await import('./tool-agent');
       return researchToolAgentRequest(request,signal,{beforeModelCall:request.beforeModelCall,beforeToolCall:request.beforeToolCall,onModelUsage:request.onModelUsage});
     }

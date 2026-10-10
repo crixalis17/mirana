@@ -9,7 +9,8 @@ export type ProviderPageProvenance={kind:'provider-page-extraction';provider:'fi
 export type SourceProvenance=ListingApiProvenance|ProviderPageProvenance;
 export type ReadSource={url:string;title:string;sourceKind:SourceKind;accessStatus:SourceAccessStatus;retrievedAt:string;publishedAt:string|null;contentHash:string|null;bodyText:string;paragraphs:string[];quotes:SourceQuote[];textTrust:'untrusted-original-page'|'untrusted-provider-api-json'|'untrusted-provider-page';provenance?:SourceProvenance;truncated:boolean;note:string};
 export const SOURCE_READER_LIMITS={maxSources:12,concurrency:3,timeoutMs:8000,maxBodyBytes:1048576,maxTextChars:12000,maxRoundTextChars:36000,maxQuoteChars:1200,maxRoundQuoteChars:6000} as const;
-const reviews=new Set(['notebookcheck.net','www.notebookcheck.net','rtings.com','www.rtings.com','gsmarena.com','www.gsmarena.com','trustedreviews.com','www.trustedreviews.com','androidauthority.com','www.androidauthority.com']);
+const reviews=new Set(['notebookcheck.net','www.notebookcheck.net','rtings.com','www.rtings.com','gsmarena.com','www.gsmarena.com','trustedreviews.com','www.trustedreviews.com','androidauthority.com','www.androidauthority.com',
+  'techradar.com','www.techradar.com','tomsguide.com','www.tomsguide.com','theverge.com','www.theverge.com','wareable.com','www.wareable.com','dcrainmaker.com','www.dcrainmaker.com','pcmag.com','www.pcmag.com']);
 const owners=new Set(['reddit.com','www.reddit.com']);
 const retailers=new Set(['amazon.in','www.amazon.in','flipkart.com','www.flipkart.com','croma.com','www.croma.com','reliancedigital.in','www.reliancedigital.in']);
 const skipTags=new Set(['nav','header','footer','aside','svg','canvas','template','iframe','object','button','select','textarea']);
