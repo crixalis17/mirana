@@ -30,10 +30,15 @@ export const WEB_TOOL_DEFINITIONS:Array<{name:WebToolName;description:string;inp
 ];
 function safeUrl(value:unknown){const url=sourceKey(value);if(!url||url.length>2000||url.includes('[redacted]'))return null;
   if([...new URL(url).searchParams.keys()].some(key=>/(?:key|token|secret|signature|credential|password|auth)/i.test(key)))return null;return url;}
-// A merchant may add/remove one terminal slash. Keep the origin, complete path
-// and query identical otherwise; redirects to another product are not accepted.
+// Amazon adds th=1 to render variation controls without changing the selected
+// ASIN. Ignore only known presentation flags, never arbitrary variant queries.
+// Other merchants retain their full query, including Flipkart pid/lid identity.
 function sameSourcePage(left:string|null,right:string|null){if(!left||!right)return false;
-  const a=new URL(left),b=new URL(right);return a.origin===b.origin&&a.pathname.replace(/\/$/,'')===b.pathname.replace(/\/$/,'')&&a.search===b.search;}
+  const a=new URL(left),b=new URL(right);
+  if(a.hostname==='www.amazon.in'&&b.hostname==='www.amazon.in'&&/^\/dp\/[A-Z0-9]{10}\/?$/.test(a.pathname)&&/^\/dp\/[A-Z0-9]{10}\/?$/.test(b.pathname)){
+    for(const page of [a,b])for(const flag of ['th','psc'])if(page.searchParams.getAll(flag).length===1&&page.searchParams.get(flag)==='1')page.searchParams.delete(flag);
+  }
+  return a.origin===b.origin&&a.pathname.replace(/\/$/,'')===b.pathname.replace(/\/$/,'')&&a.search===b.search;}
 function scrub(value:string,env:Env){let text=value;for(const name of ['FIRECRAWL_API_KEY','TAVILY_API_KEY','GOOGLE_API_KEY','SERPAPI_API_KEY','BRIGHT_DATA_API_TOKEN','KEEPA_API_KEY']){
   if(env[name])text=text.replaceAll(env[name]!, '[redacted]').replaceAll(encodeURIComponent(env[name]!), '[redacted]');}return text;}
 async function boundedResponse(response:Response,signal:AbortSignal){if(!response.body)return response;

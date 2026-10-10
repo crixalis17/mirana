@@ -52,5 +52,19 @@ const fire=await executeWebTool('read_source_firecrawl',{url},signal,{env,fetch:
 assert.equal(fire.ok,true);assert.equal(fire.source.provenance.endpoint,FIRECRAWL_MCP_ENDPOINT);assert.equal(providerPageProvenanceValid(fire.source),true);
 assert.ok(rpcMethods.includes('tools/call'));assert.ok(rpcMethods.includes('close'));
 for(const changed of [url+'-different-product',url+'?variant=different','https://www.apple.com/in/other']){returnedFireUrl=changed;const mismatch=await executeWebTool('read_source_firecrawl',{url},signal,{env,fetch:fireFetch});assert.equal(mismatch.error.code,'INVALID_OUTPUT');}
+// Live Amazon metadata adds th=1 to the same exact ASIN. Accept the rendering
+// flag while rejecting different ASINs and unexplained variant flags.
+const amazonUrl='https://www.amazon.in/dp/B0F3GWXLTS';let amazonReturned=amazonUrl+'?th=1';
+const amazonFireFetch=async(target,init)=>{
+ const reply=await fireFetch(target,init);
+ if(init.method!=='POST'||JSON.parse(init.body).method!=='tools/call')return reply;
+ const rpc=JSON.parse(init.body);
+ return Response.json({jsonrpc:'2.0',id:rpc.id,result:{content:[],structuredContent:{markdown:text,metadata:{title:'Acme selected product',url:amazonReturned,sourceURL:amazonUrl,statusCode:200,contentType:'text/html;charset=UTF-8'}}}},{headers:{'mcp-session-id':'fixture-session'}});
+};
+const amazonFire=await executeWebTool('read_source_firecrawl',{url:amazonUrl},signal,{env,fetch:amazonFireFetch});
+assert.equal(amazonFire.ok,true);assert.equal(amazonFire.source.url,amazonUrl);assert.equal(providerPageProvenanceValid(amazonFire.source),true);
+for(const changed of ['https://www.amazon.in/dp/B0BDHWDR12?th=1',amazonUrl+'?variant=different',amazonUrl+'?th=2']){
+ amazonReturned=changed;assert.equal((await executeWebTool('read_source_firecrawl',{url:amazonUrl},signal,{env,fetch:amazonFireFetch})).error.code,'INVALID_OUTPUT');
+}
 mcpReplyError=true;const denied=await executeWebTool('read_source_firecrawl',{url},signal,{env,fetch:fireFetch});assert.equal(denied.error.code,'ACCESS_DENIED');assert.equal(JSON.stringify(denied).includes('Private provider'),false);
 console.log('PASS: Tavily keyless/keyed API and Firecrawl MCP, literal extraction, fixed endpoints/read-only schemas, no summary promotion, invalid URL/credential/size rejection, no retries, cancellation and local-only gates');

@@ -78,6 +78,9 @@ assert.equal(listed.sources[0].contentHash, createHash('sha256').update(listed.s
 assert.equal(listed.sources[0].textTrust, 'untrusted-provider-api-json');
 assert.equal(calls.at(-1).url.hostname, 'api.brightdata.com'); assert.equal(calls.at(-1).url.searchParams.get('dataset_id'), env.BRIGHT_DATA_AMAZON_DATASET_ID);
 assert.deepEqual(JSON.parse(calls.at(-1).init.body), { input: [{ url: amazon }], limit_per_input: 1 });
+// MRP and a rounded discount do not substitute for an omitted buy-box price.
+const missingPrice=await run('fetch_product_listing',{url:amazon},[{url:amazon,title:'Exact selected product',initial_price:46900,discount:'-26%',currency:'INR',availability:'In stock'}]);
+assert.equal(missingPrice.ok,true);assert.equal(missingPrice.offers[0].price,null);assert.equal(missingPrice.offers[0].availability,'In stock');
 const wrong = await run('fetch_product_listing', { url: amazon }, [{ ...row, url: 'https://www.amazon.in/dp/B0BDHWDR12' }]);
 assert.equal(wrong.error.code, 'NO_DATA'); assert.equal(wrong.sources.length, 0);
 assert.equal((await run('fetch_product_listing', { url: flipkart }, [{ ...row, url: flipkart, title: undefined, name: 'Flipkart variant' }])).ok, true);

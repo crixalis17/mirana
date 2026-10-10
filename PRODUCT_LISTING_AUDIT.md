@@ -40,3 +40,20 @@ The long and short Amazon URLs for `B0DGJ6FKSB` represent the same ASIN, not two
 - No complete unconditional checkout, new-condition proof, 600019 delivery confirmation or merchant stock verification is established.
 - The API results are **not all suitable or exact**. A successful transport must never automatically turn every returned result into a shortlist item or a deal email.
 - These independent audit observations are recorded here; they are not silently injected into an already-running model assessment.
+
+## User-supplied Amazon listing — additional audit
+
+The user subsequently supplied `https://amzn.in/d/0e6b5Wzl`. A normal browser navigation resolved it to [Amazon ASIN B0FQG8R2XW](https://www.amazon.in/dp/B0FQG8R2XW): **Apple Watch Series 11 GPS 42mm Jet Black Aluminium Case with Black Sport Band, M/L**, model `MEQU4HN/A`. The selected browser buy box displayed INR 34,499 without exchange, inclusive of taxes, in stock, sold by Clicktech Retail Private Ltd, shipped by Amazon, with free delivery shown for Chennai 600019. Bank offers were separate and were not subtracted. This ASIN is absent from the saved job's discovered merchant URLs; the earlier Bright Data request used SE 2 ASIN `B0DGJ6FKSB`. These are different products, not conflicting responses for the same SKU.
+
+Fresh independent probes used the exact canonical Series 11 URL; no Gemini generation, job-counter reset, checkout or alert opt-in occurred.
+
+| Path | Actual result | Interpretation |
+|---|---|---|
+| Original Amazon page reader, 16:05:56 UTC | Same Series 11 title and selected buy-box INR 34,499; in stock | Corroborates the browser's selected item and base price. |
+| Bright Data, 16:06:02 UTC | Requested/input/returned ASIN all `B0FQG8R2XW`; correct title, seller, model, INR and in-stock flag; current price absent | Extraction identity is correct. Raw response contains `initial_price: 46900` and rounded `discount: -26%`, but neither `final_price` nor `price`; selected variation price is null. Mirana correctly keeps the current price unknown rather than substituting MRP or calculating from a rounded discount. |
+| Bright Data delivery context | `input.zipcode` is empty; provider delivery date differs from the 600019 browser session | The transport currently passes only URL. Scraper stock/delivery is not proof for the user's postcode. |
+| Tavily extraction, 16:07:19 UTC | Successful literal extraction with matching title/URL; the INR 34,499 price was not corroborated in its returned text | Discovery/extraction success alone does not verify all offer fields. |
+| Firecrawl before fix | HTTP 200, exact matching ASIN/title, literal INR 34,499/in-stock markdown, but Mirana returned `INVALID_OUTPUT` | Mirana rejected metadata URL `.../dp/B0FQG8R2XW?th=1` versus requested URL without that presentation flag. This was an integration bug. |
+| Firecrawl after local fix, 16:11:38 UTC | Successful literal extraction, matching ASIN/title, INR 34,499 and in stock | Provenance remains provider extraction. The fix ignores only Amazon's known `th=1`/`psc=1` rendering flags for matching exact `/dp/ASIN` paths; different ASINs, unknown variant queries and changed Flipkart identifiers remain rejected. |
+
+The saved plan's concrete questions focused on SE 2, Series 10 and Series 9 despite the broad Apple Watch family request. Combined with absent official catalog coverage and only one expensive Series 11 Flipkart lead, discovery missed a qualifying Amazon listing. Updated generic discovery instructions require current official-catalog generation checks, treating plan questions as hypotheses, prioritizing a supplied exact reference URL, and checking multiple merchants before a product-wide price exclusion. Prompt changes are not proof of a completed new agent run; the old assessment remains incomplete.
