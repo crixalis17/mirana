@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {registerHooks} from 'node:module';
+registerHooks({resolve(s,c,next){try{return next(s,c);}catch(e){if(s.startsWith('.'))return next(`${s}.ts`,c);throw e;}}});
+const {executeProductTool}=await import('../lib/research/product-tools.ts');
+const {listingApiSnapshots,mergeSourceSnapshots}=await import('../lib/research/api-evidence.ts');
+const {validateClaimAssessment}=await import('../lib/research/claims.ts');
+const hash=text=>createHash('sha256').update(text).digest('hex');
+const date='2026-10-09T10:00:00Z',url='https://www.amazon.in/dp/B0F3GWXLTS',title='Acme Book14 16GB RAM 512GB SSD';
+const row={url,title,final_price:45000,currency:'INR',condition:'New',availability:'In stock',timestamp:date,
+ features:['16GB RAM','512GB SSD'],recommended_products:[{title:'Wrong model',price:1}],debug:'Not listing evidence'};
+const result=await executeProductTool('fetch_product_listing',{url},new AbortController().signal,{env:{BRIGHT_DATA_API_TOKEN:'fixture-credential',BRIGHT_DATA_AMAZON_DATASET_ID:'gd_test12345'},now:()=>Date.parse(date),fetch:async()=>Response.json([row])});
+assert.equal(result.ok,true);const observation=result.observations[0],api=listingApiSnapshots([observation])[0];
+assert.equal(api.textTrust,'untrusted-provider-api-json');assert.equal(api.provenance.payloadHash,observation.source.responseHash);
+assert.equal(api.contentHash,hash(api.bodyText));assert.equal(api.bodyText.includes('Wrong model'),false);assert.equal(api.bodyText.includes('Not listing evidence'),false);
+for(const altered of [{kind:'search-result'},{kind:'price-history'},{exactId:'WRONGASIN0'},{requestedUrl:'https://www.amazon.in/dp/B0BDHWDR12'},
+ {source:{...observation.source,contentHash:'0'.repeat(64)}},{source:{...observation.source,url:'https://evil.test/'}},{source:{...observation.source,truncated:true}}])assert.equal(listingApiSnapshots([{...observation,...altered}]).length,0);
+const direct={...api,textTrust:'untrusted-original-page',provenance:undefined,bodyText:'Original merchant evidence',contentHash:hash('Original merchant evidence'),paragraphs:['Original merchant evidence']};
+const blocked={...direct,accessStatus:'blocked',bodyText:'',paragraphs:[]};
+assert.equal(mergeSourceSnapshots([blocked],[api])[0].textTrust,'untrusted-provider-api-json');
+assert.equal(mergeSourceSnapshots([direct],[api])[0].textTrust,'untrusted-original-page');
+assert.equal(mergeSourceSnapshots([direct,{...blocked,retrievedAt:'2026-10-09T11:00:00Z'}],[])[0].bodyText,direct.bodyText);
+const many=Array.from({length:12},(_,i)=>({...direct,url:`https://www.amazon.in/dp/fixture${i}`,bodyText:'x'.repeat(12000),paragraphs:['x'.repeat(12000)],contentHash:hash('x'.repeat(12000))}));
+const merged=mergeSourceSnapshots(many,[]);assert.ok(merged.reduce((n,s)=>n+s.bodyText.length,0)<=36000);for(const s of merged)assert.equal(s.contentHash,hash(s.bodyText));
+assert.equal(mergeSourceSnapshots(many.map(s=>({...s,accessStatus:'blocked',bodyText:''})),[api])[0].url,url,'Usable API evidence must precede blocked entries');
+
+const proof=quote=>({sourceUrl:url,quote});
+const quote=api.bodyText;
+const candidate={name:'Acme Book14',variant:'16GB RAM 512GB SSD',hardRequirements:[],comparisonClaims:[{text:'Measured battery 8 hours',kind:'measurement',...proof(quote)}],mandatoryAccessories:[],productPrice:{value:45000,...proof(quote)},condition:{value:'new',...proof(quote)},currentAvailability:{value:'in_stock',...proof(quote)}};
+const context={brief:{requestText:'New laptop',condition:'New only',budget:55000,topN:3},plan:{hardRequirements:[],requiredAccessories:[]},referenceDate:date,sources:[api]};
+const validate=(source=api,item=candidate)=>validateClaimAssessment({candidates:[item],gaps:[],followupQuestions:[],sufficient:true},{...context,sources:[source]}).candidates[0];
+const accepted=validate();assert.equal(accepted.productPrice,45000);assert.equal(accepted.condition,'new');assert.equal(accepted.currentAvailability,'in_stock');
+assert.equal(accepted.eligibility.provisional,true);assert.equal(accepted.eligibility.checkoutVerified,false);assert.equal(accepted.comparisonClaims[0].status,'unknown');
+assert.equal(accepted.productPriceEvidence.provenance.provider,'brightdata');
+assert.equal(validate({...api,provenance:{...api.provenance,providerUpdatedAt:'2020-01-01T00:00:00Z'}}).productPrice,null);
+assert.equal(validate({...api,provenance:{...api.provenance,providerUpdatedAt:'2030-01-01T00:00:00Z'}}).productPrice,null);
+assert.equal(validate({...api,contentHash:'0'.repeat(64)}).productPrice,null);
+const refurbished={...row,condition:'Refurbished'};const body=JSON.stringify(refurbished,null,2);const ref={...api,bodyText:body,contentHash:hash(body)};
+assert.equal(validate(ref,{...candidate,productPrice:{value:45000,...proof(body)},condition:{value:'new',...proof(body)},currentAvailability:{value:'in_stock',...proof(body)}}).eligibility.blocked,true,'Literal refurbished JSON contradicts a model-labelled new item');
+console.log('PASS: exact listing API capability, identity/hash integrity, field projection, search/history exclusion, original precedence, cross-round retention, bounded quote hashes and provisional JSON price/condition/stock claims');

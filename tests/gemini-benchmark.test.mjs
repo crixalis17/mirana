@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
+import { toVertexSchema, validateSchema, responseText, groundingSources, estimatedCost, structuralMetrics } from '../scripts/gemini-benchmark-core.mjs';
+const schema = { type: 'object', additionalProperties: false, required: ['price'], properties: { price: { type: ['number', 'null'] } } };
+assert.deepEqual(toVertexSchema(schema), { type: 'OBJECT', required: ['price'], propertyOrdering: ['price'], properties: { price: { type: 'NUMBER', nullable: true } } });
+assert.deepEqual(validateSchema({ price: null }, schema), []);
+assert.equal(validateSchema({ price: '100' }, schema).length, 1);
+assert.equal(validateSchema({ price: 100, invented: true }, schema).length, 1);
+assert.equal(validateSchema({}, schema).length, 1);
+assert.equal(responseText({ candidates: [{ content: { parts: [{ thought: true, text: 'Private reasoning' }, { text: 'Visible research' }] } }] }), 'Visible research');
+const evidence = groundingSources({ candidates: [{ groundingMetadata: { webSearchQueries: ['tablet', ''], groundingChunks: [{ web: { uri: 'https://amazon.in/p', title: 'Tablet' } }, { other: true }], groundingSupports: [{ segment: { text: 'Tablet' } }] } }] });
+assert.equal(evidence.sources.length, 1); assert.deepEqual(evidence.queries, ['tablet']); assert.equal(evidence.supports.length, 1);
+const cost = estimatedCost({ inputUsd: 1, outputUsd: 10, cachedUsd: 0.1 }, { promptTokenCount: 1000, cachedContentTokenCount: 100, candidatesTokenCount: 200, thoughtsTokenCount: 50 }, ['q', 'q']);
+assert.equal(cost.outputAndThinkingTokens, 250); assert.equal(cost.searchCount, 1); assert.ok(Math.abs(cost.usd - 0.01741) < 1e-8);
+const metrics = structuralMetrics({ products: [{ sources: [{ url: 'https://invented.example' }], offers: [{ url: 'https://amazon.in/p', price: 101 }] }] }, { products: [] }, evidence.sources, { budget: 100, topN: 1 }, []);
+assert.equal(metrics.unknownSourceUrls, 1); assert.equal(metrics.knownOverBudgetCandidates, 1); assert.equal(metrics.candidatesRetained, 0);
+console.log('PASS: Gemini benchmark schema validation, grounding extraction, hidden thought exclusion, cost accounting and constraint metrics');
+
+const highPlan=JSON.parse(execFileSync(process.execPath,['--experimental-strip-types','scripts/benchmark-gemini.mjs','--thinking','high'],{cwd:new URL('../',import.meta.url),encoding:'utf8'}));
+assert.deepEqual(highPlan.models,['gemini-3.8-flash']);
+assert.equal(highPlan.maxOutputTokensPerRequest,65536);assert.equal(highPlan.timeoutMs,null);
+assert.deepEqual(highPlan.thinking,{research:'HIGH',extraction:'HIGH'});
+assert.equal(highPlan.maxGenerationRequests,8);assert.equal(highPlan.productionWrites,false);assert.equal(highPlan.sendsEmail,false);
+assert.deepEqual(highPlan.cases,['tablet','laptop','air-purifier','tablet-repeat']);
+console.log('PASS: high-thinking dry-run is Flash 3.8 only, same cases, model-maximum output allowance, no application deadline, separate isolated artifacts and no credential/provider calls');

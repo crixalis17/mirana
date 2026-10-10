@@ -1,8 +1,8 @@
 # Mirana setup for Vercel
 
-This prepares a new Vercel deployment. It does not change the existing owner-private Sites preview. No Vercel deployment, Google web client, Turso production database, live research call or email delivery has been verified yet.
+This guide covers local validation and a later Vercel release. The enhanced staged research iteration is implemented locally, with final verification in progress, and has not been deployed. Existing production configuration and the owner-private Sites preview remain unchanged. Google sign-in, the selected research provider, merchant checkout and email delivery must each be validated in the environment being configured.
 
-You can use a Vercel-provided production address without buying a domain. Choose an available app alias without your email username. `mirana.vercel.app` is not reserved or guaranteed available. Use the actual stable alias assigned to your project everywhere below; preview URLs may differ and should not be used as production OAuth callbacks.
+You can use a Vercel-provided production address without buying a domain. Use the actual stable alias assigned to your project everywhere below; for an existing Mirana deployment, retain its configured alias. Preview URLs may differ and should not be used as production OAuth callbacks. A new project's preferred alias must be confirmed during deployment.
 
 ## 1. Prepare accounts and database
 
@@ -14,16 +14,16 @@ From the repository root:
 
 ```sh
 npm ci
-cp .env.example .env.local
+cp -n .env.example .env.local
 ```
 
-Fill `.env.local` privately, then apply the schema:
+Copy the example only if `.env.local` does not already exist; preserve saved credentials. Fill it privately and choose a local `file:` database for localhost testing, then apply the schema:
 
 ```sh
 npm run db:migrate
 ```
 
-The migration CLI applies the checked-in schema once per migration. It does not transfer the Sites D1 data. Follow [MIGRATION.md](MIGRATION.md) to move existing records. Verify the database URL before running a migration against a remote database.
+The migration CLI applies the checked-in schema once per migration, including the new `research_jobs` table. It does not transfer the Sites D1 data. Follow [MIGRATION.md](MIGRATION.md) to move existing records. Verify the database URL before running a migration against a remote database; this local iteration does not authorize a production migration.
 
 Local development defaults to `file:./mirana.local.db` when no remote URL is configured. Run `npm run dev -- --port 5174`, matching the supplied `APP_ORIGIN`. A labelled local preview requires explicit `AUTH_PREVIEW_MODE=true` on localhost when Google is unconfigured; production never grants a shared preview identity. Optional `MIRANA_DEMO_MODE=true` adds local example data only in that development preview. Normal Google accounts start empty.
 
@@ -40,7 +40,7 @@ Import your repository in Vercel and set:
 | Install command | `npm ci` |
 | Build command | `npm run build` |
 | Output directory | Next.js default; leave unset |
-| Node.js version | Compatible with the package's Node 22 requirement |
+| Node.js version | Node 24.13.0+ for the pinned Google ADK runtime (choose Node 24 when available) |
 
 Choose a project name and production alias without your email username. The deployment's shareable production alias, rather than the Sites address, resolves the email-username concern. A custom domain remains optional.
 
@@ -87,8 +87,18 @@ None of these credentials belongs in a `NEXT_PUBLIC_` variable, browser code, a 
 | `CRON_SECRET` | A different random secret of at least 32 characters protecting the dispatcher |
 | `OPENAI_API_KEY` | Separate OpenAI API key for research; API usage is billed independently of ChatGPT |
 | `OPENAI_RESEARCH_MODEL` | Optional research model; default `gpt-5.5` |
-| `RESEARCH_MAX_JOBS` | Optional bounded jobs per run; default 1 |
-| `RESEARCH_TIMEOUT_MS` | Optional per-call research timeout; default 90000 milliseconds |
+| `RESEARCH_PROVIDER` | `openai` by default; explicitly choose `vertex` to use the Google credentials below |
+| `GOOGLE_API_KEY` | Server-side Vertex AI key, required only for explicit Vertex research or the separate benchmark |
+| `GOOGLE_CLOUD_PROJECT` | Explicit Google Cloud project ID charged by the Vertex requests |
+| `GEMINI_RESEARCH_MODEL` | Optional Vertex model; default `gemini-3.8-flash` |
+| `RESEARCH_MAX_JOBS` | Jobs per dispatch; default 1, maximum 2 |
+| `RESEARCH_STEP_TIMEOUT_MS` | Staged-call timeout; default 120000 ms, bounded to 10000–180000 |
+| `RESEARCH_MAX_CALLS` | Attempted generation calls per job; default/maximum 8 |
+| `RESEARCH_MAX_ROUNDS` | Targeted follow-up rounds; default/maximum 2 |
+| `RESEARCH_MAX_INPUT_TOKENS` | Estimated/recorded input limit; default 100000, maximum 200000 |
+| `RESEARCH_MAX_OUTPUT_TOKENS` | Output limit; default 24000, maximum 48000 |
+| `RESEARCH_TIMEOUT_MS` | Legacy two-call helper timeout only; not the new staged worker timeout |
+| `RESEARCH_LOG_LEVEL` | `info` for safe structured server diagnostics; `off` disables logging; `debug` keeps the same privacy restrictions |
 | `WORKER_MIN_INTERVAL_HOURS` | 24 for daily Hobby dispatch; 1 for an external or Pro hourly dispatcher |
 | `RESEND_API_KEY` | Resend sending key, needed for emails |
 | `EMAIL_FROM` | Authorized Mirana sender address, needed for emails |
@@ -100,9 +110,19 @@ Generate independent machine secrets with a password manager or a cryptographica
 
 ## 5. Activate research and choose scheduling
 
-The Vercel worker uses OpenAI Responses web search. Create an API key and configure the research variables above. No API key was supplied during migration preparation, and the previous Sites/Codex cloud researcher is not automatically moved to Vercel. Instinct AI is not connected.
+The staged worker defaults to OpenAI Responses web search. To use Vertex AI locally, set `RESEARCH_PROVIDER=vertex` explicitly and provide `GOOGLE_API_KEY` plus `GOOGLE_CLOUD_PROJECT`; the default Gemini model is `gemini-3.8-flash`. Google keys alone do not switch providers. Requests use ordinary explicit-project global `generateContent`, not Google's managed Deep Research preview. The previous Sites/Codex cloud researcher is not automatically moved to Vercel. Instinct AI is not connected. API calls can incur charges, and Google promotional-credit eligibility must be checked separately.
 
-Saving a new item requests initial research through authenticated `POST /api/research`. The route checks ownership and schedules work after its response with Next.js `after`; the cron dispatcher retries any item that remains queued. Initial research therefore does not need to wait for the next daily cron when the provider is configured.
+Saving a new item requests initial research through authenticated `POST /api/research`. The route checks ownership, persists a job and requests a wake-up after its response with Next.js `after`. Stages are plan, gather, independent original-page read, claim assessment, up to two targeted follow-up/read/reassessment rounds, synthesize, verify and publish. Planning separates hard requirements from secondary preferences. The read stage consumes no generation call and is saved as its own checkpoint. The plan is read-only. Progress, cancellation and retry are exposed through `/api/research` and WebMCP. Completed steps survive refresh; retry does not reset the job's attempted-call limits.
+
+For sustained localhost execution, run this explicitly in a second terminal against the same local `file:` database after migration:
+
+```sh
+npm run worker:local
+```
+
+The script loads `.env.local`, rejects hosted database URLs and production/Vercel execution, and pauses five seconds between dispatches. It is not started automatically by the dev server and can invoke billable providers. Do not use it against production data. Next.js `after` is a wake-up opportunity, not a continuous worker. A reliable frequent production dispatcher remains unresolved; daily cron can leave partially completed jobs waiting for another invocation.
+
+Provider-associated citation/grounding excerpts are discovery leads. The independent reader fetches only exact approved official/retailer/review/owner domains, blocks redirects and access gates, and uses an eight-second/one-MiB limit per source, at most 12 sources and concurrency three per round. Stored original text is capped at 12000 characters/source and 36000/round, with bounded direct quotes, retrieval/publication metadata, hashes and explicit truncation. Typed claim assessment requires original quote association and preserves contradictions/unknowns; models remain semantically fallible and neither quotations nor listing prices prove checkout. `RESEARCH_LOG_LEVEL=info` reports hashed job/stage/count/usage diagnostics without prompts, identities, page bodies, provider payloads or hidden reasoning. See [DEEP_RESEARCH_DESIGN.md](DEEP_RESEARCH_DESIGN.md) for limits and evidence contracts. Due opted-in watches refresh saved exact listings without LLM calls; provider credentials are needed for new research, not those saved-offer checks.
 
 `GET /api/cron` requires `Authorization: Bearer <CRON_SECRET>`. Queue/report operations at `/api/automation` require the separate `Authorization: Bearer <AUTOMATION_SECRET>`. Vercel attaches the cron bearer secret when configured; an external scheduler must supply it as a private header. Never put either secret in a query string.
 
@@ -111,7 +131,7 @@ The checked-in `vercel.json` provides a daily dispatcher at 04:30 UTC (10:00 IST
 - An external scheduler that requests the protected `/api/cron` endpoint hourly over HTTPS with the secret header.
 - A Vercel plan supporting hourly cron, with the hourly configuration supplied in `vercel.pro.json` copied to `vercel.json` before deploying.
 
-Set `WORKER_MIN_INTERVAL_HOURS=1` only when the dispatcher actually runs hourly. A daily dispatcher can satisfy daily or longer checks, subject to dispatch timing; it cannot promise the exact minute selected in the UI. The lease prevents overlap, while due times control which requests are processed. Default capacity is one request per dispatch, so a growing queue requires more capacity or a more frequent scheduler. Function duration and provider timeouts can also limit a run.
+Set `WORKER_MIN_INTERVAL_HOURS=1` only when the dispatcher actually runs hourly. A daily dispatcher can satisfy daily or longer checks, subject to capacity and timing; it cannot promise the exact minute selected in the UI. Per-job leases fence research checkpoints, and item leases protect due deal checks. Default capacity is one job per dispatch. A worker has a 200-second invocation budget and releases completed checkpoints when insufficient time remains to start the next stage. Provider timeouts, queue capacity and a daily dispatcher can therefore delay completion. Verify a reliable frequent production dispatcher before release.
 
 If using an external scheduler, remove the `crons` entry from `vercel.json` and redeploy so there is exactly one dispatch source. Keep the scheduler header secret in its credential settings, and verify its actual execution history before enabling users' 12-hour or custom checks.
 
@@ -133,9 +153,12 @@ Reference: [Resend's testing-recipient and domain restrictions](https://resend.c
 npx tsc --noEmit
 npm run build
 npm test
-npx vercel --prod
 ```
 
-Verify the actual production URL, Google callback, persisted shopping data, account isolation, rejected unauthorized worker calls, a scheduled research write, authenticated actual merchant checkout receipts and opt-in email delivery. Keep the old Sites preview and its data intact until the new target passes these checks. Pause its old schedule only at the validated cutover to prevent duplicate research.
+Complete localhost validation first, including the enhanced original-reader/claim-ledger flow. The earlier four-call Vertex smoke test ran before these additions and does not establish enhanced live quality. Production migrations, configuration changes and deployment require an explicit release request. At that point, deploy with the existing project workflow or `npx vercel --prod`, then verify the production URL, Google callback, persisted shopping data, account isolation, rejected unauthorized worker calls, checkpoint recovery, frequent dispatch, actual authenticated merchant checkout receipts and opt-in email delivery. Keep the old Sites preview and its data intact until the new target passes these checks. Pause its old schedule only at the validated cutover to prevent duplicate research.
 
 Hosting, database, research tokens/web searches, email and optional paid scheduling are separate costs. Check each provider's current plan and spending controls before enabling unattended research; no whole-app free-cost guarantee is made.
+
+## Release configuration (10 October 2026)
+
+The current daily-only UI uses the checked-in 10 AM IST cron. Enable released ADK research with `RESEARCH_PROVIDER=vertex`, `GEMINI_RESEARCH_MODEL=gemini-3.8-flash`, `RESEARCH_TOOLS_ENABLED=true`, and `RESEARCH_PRODUCTION_ENABLED=true`. Keep keys server-only. `RESEARCH_USER_DAILY_JOB_LIMIT=3` and `RESEARCH_DAILY_JOB_LIMIT=10` enforce shared rolling-24-hour new-job allowances; these are distinct from existing per-job model/tool limits. The research job table/indexes are created additively on first authenticated research use; existing account data is preserved. Email credentials and actual checkout verification still need separate setup.

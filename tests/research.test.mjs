@@ -20,8 +20,9 @@ const source = 'https://www.amazon.in/dp/example';
 const evidence=responseEvidence({output:[{type:'web_search_call',status:'completed',action:{sources:[{url:source}]}},{type:'message',content:[{type:'output_text',text:'notes',annotations:[{type:'url_citation',url:'https://review.example/tablet'}]}]}]});
 assert.equal(evidence.searched,true); assert.equal(evidence.urls.size,2);
 const draft={summary:'Fits pen use.',category:'Tablet',uses:['Sketching'],mustHave:['Pen'],budget:60000,needsClarification:[],excluded:[],products:[{name:'Tablet 10',variant:'128GB Blue',fit:'Pen work',pros:['Pressure pen'],cons:['Refresh rate'],sources:[{url:source,label:'Listing',kind:'Retailer',note:'Listing evidence'}],offers:[{url:source,retailer:'Amazon',price:45000,accessories:'Pen required',verified:true,deliveryVerified:true,total:45000}],verdict:'Fits',dealAssessment:'Great deal!'}]};
-const purchase={id:'purchase',topN:3,budget:60000};
+const purchase={id:'purchase',topN:3,budget:60000,priorities:['Smooth & fast','Pen quality'],customTags:[' Low glare ','Portability','portability']};
 const normalized=normalizeResearch(draft,evidence.urls,purchase,'2026-10-07T00:00:00Z');
+assert.deepEqual(normalized.preferencesUsed,{priorities:['Performance'],customTags:['Pen quality','Low glare','Portability']});
 assert.equal(normalized.products.length,1); assert.equal(normalized.recommendedId,normalized.products[0].id);
 for(const flag of ['verified','deliveryVerified','sellerReliable','mandatoryCostsVerified']) assert.equal(normalized.products[0].offers[0][flag],false);
 assert.equal(normalized.products[0].offers[0].total,null);
@@ -58,6 +59,10 @@ try {
     calls++;
     if(url===source)return new Response(ld(node),{headers:{'content-type':'text/html'}});
     assert.equal(url,'https://api.openai.com/v1/responses');const input=JSON.parse(options.body);
+    const supplied=JSON.parse(input.input);
+    assert.deepEqual(supplied.brief.priorities,['Performance']);
+    assert.deepEqual(supplied.brief.customTags,['Pen quality','Low glare','Portability']);
+    assert.match(input.instructions,/secondary ranking preferences/);
     if(calls===1){assert.equal(input.tools[0].type,'web_search');assert.equal(input.store,false);return Response.json({status:'completed',output:[{type:'web_search_call',status:'completed',action:{sources:[{url:source}]}},{type:'message',content:[{type:'output_text',text:'Supported tablet research',annotations:[]}]}]});}
     assert.equal(input.text.format.strict,true);
     return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(draft),annotations:[]}]}]});

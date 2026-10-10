@@ -1,6 +1,7 @@
 import {cookies} from 'next/headers';
 import {config,emailReady,googleReady,user} from '@/lib/auth';
 import WorkspaceClient,{type InitialSession} from './workspace-client';
+import {canViewUsage} from '@/lib/admin/access';
 
 export default async function Home(){
   const cookieStore=await cookies();
@@ -10,6 +11,7 @@ export default async function Home(){
       headers:{cookie:cookieStore.toString()},
     });
     initialSession.user=await user(request);
+    initialSession.canViewUsage=canViewUsage(initialSession.user);
   }catch{
     initialSession.error='Could not check your session. Please retry.';
   }

@@ -1,7 +1,7 @@
 import {createRemoteJWKSet,jwtVerify} from 'jose';
 import {db} from './store';
 export const config=()=>process.env as Record<string,string>;
-export function appOrigin(request:Request){const origin=config().APP_ORIGIN;if(!origin&&process.env.NODE_ENV==='production')throw new Error('APP_ORIGIN is required in production.');const parsed=new URL(origin||new URL(request.url).origin);if(parsed.pathname!=='/'||parsed.search||parsed.hash||parsed.username||parsed.password||(process.env.NODE_ENV==='production'&&parsed.protocol!=='https:'))throw new Error('APP_ORIGIN must be an HTTPS origin in production.');return parsed.origin;}
+export {appOrigin} from './origin';
 export const googleReady=()=>!!(config().GOOGLE_CLIENT_ID&&config().GOOGLE_CLIENT_SECRET);
 export const emailReady=()=>!!(config().RESEND_API_KEY&&config().EMAIL_FROM);
 export const random=()=>Array.from(crypto.getRandomValues(new Uint8Array(32))).map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -17,4 +17,4 @@ export async function user(request:Request){
 }
 export async function requireUser(request:Request){const u=await user(request);if(!u)throw new Error('Sign in with Google to continue.');return u;}
 const keys=createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
-export async function verifyGoogle(token:string,nonce:string){const {payload}=await jwtVerify(token,keys,{issuer:['https://accounts.google.com','accounts.google.com'],audience:config().GOOGLE_CLIENT_ID});if(payload.nonce!==nonce||payload.email_verified!==true||!payload.sub||typeof payload.email!=='string')throw new Error('Google identity could not be verified.');return {id:payload.sub,name:typeof payload.name==='string'?payload.name:'Your account',email:payload.email,preview:false};}
+export async function verifyGoogle(token:string,nonce:string){const {payload}=await jwtVerify(token,keys,{issuer:['https://accounts.google.com','accounts.google.com'],audience:config().GOOGLE_CLIENT_ID});if(payload.nonce!==nonce||payload.email_verified!==true||!payload.sub||typeof payload.email!=='string')throw new Error('Google identity could not be verified.');return {id:payload.sub,name:typeof payload.name==='string'?payload.name:'Your account',email:payload.email,preview:false,provider:'google',emailVerified:true};}

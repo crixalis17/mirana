@@ -2,7 +2,9 @@ import {config,emailReady} from './auth';
 import {db} from './store';
 import {qualifies} from './deals';
 
-async function currentPurchase(id:string,checkedAt:string){
+type ResearchPublication = {id:string;token:string};
+async function currentPurchase(id:string,checkedAt:string,job?:ResearchPublication){
+  if(job){const active=await db().prepare("SELECT id FROM research_jobs WHERE id=? AND purchase_id=? AND lease_token=? AND status='running' AND lease_expires>?").bind(job.id,id,job.token,Date.now()).first();if(!active)return null;}
   const row=await db().prepare('SELECT brief,status,report FROM purchases WHERE id=?').bind(id).first() as any;
   if(!row||row.status!=='ready'||!row.report||JSON.parse(row.report).checkedAt!==checkedAt)return null;
   const brief=JSON.parse(row.brief);
@@ -17,8 +19,8 @@ const notificationId=(p:any,o:any)=>`${p.id}|${o.productId}|${o.retailer}|${o.to
  * and Resend idempotency key. Only sent notifications suppress that retry;
  * withdrawn consent or an offer that no longer qualifies is never retried.
  */
-export async function sendDeal(p:any,report:any,history:any[],email:string|null){
-  let latest=await currentPurchase(p.id,report.checkedAt);
+export async function sendDeal(p:any,report:any,history:any[],email:string|null,job?:ResearchPublication){
+  let latest=await currentPurchase(p.id,report.checkedAt,job);
   if(!latest)return {state:'disabled'};
   const matches=report.products.flatMap((product:any)=>product.offers.map((o:any)=>({...o,productId:product.id,variant:product.variant,name:product.name})))
     .filter((o:any)=>qualifies(o,history,latest.budget,latest.alerts).qualified);
@@ -26,7 +28,7 @@ export async function sendDeal(p:any,report:any,history:any[],email:string|null)
   if(!email||!emailReady())return {state:'setup_required',offers:matches.length};
   const results:string[]=[];
   for(const o of matches){
-    latest=await currentPurchase(p.id,report.checkedAt);
+    latest=await currentPurchase(p.id,report.checkedAt,job);
     if(!latest||!qualifies(o,history,latest.budget,latest.alerts).qualified)continue;
     const id=notificationId(latest,o);
     const previous=await db().prepare('SELECT status FROM notifications WHERE id=?').bind(id).first() as any;
@@ -46,7 +48,7 @@ export async function sendDeal(p:any,report:any,history:any[],email:string|null)
       .map(x=>x.toString(16).padStart(2,'0')).join('');
     // Check consent and the current rule immediately before handing off to the
     // provider. Changes after this read cannot retract an in-flight request.
-    latest=await currentPurchase(p.id,report.checkedAt);
+    latest=await currentPurchase(p.id,report.checkedAt,job);
     if(!latest||!qualifies(o,history,latest.budget,latest.alerts).qualified||notificationId(latest,o)!==id)continue;
     let status='failed';
     try{

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.13.0"
   },
   "scripts": {
     "dev": "next dev --webpack --hostname 127.0.0.1",
@@ -11,11 +11,19 @@
     "start": "next start --hostname 127.0.0.1",
     "lint": "eslint . --ignore-pattern .next",
     "db:migrate": "node scripts/migrate-db.mjs",
-    "test": "node --experimental-strip-types tests/deals.test.mjs && node --experimental-strip-types tests/research.test.mjs"
+    "test": "node --experimental-strip-types tests/deals.test.mjs && node --experimental-strip-types tests/research.test.mjs && node --experimental-transform-types tests/preferences.test.mjs && node --experimental-strip-types tests/origin.test.mjs && node --experimental-strip-types tests/webmcp.test.mjs && node --experimental-transform-types tests/purchases.test.mjs && node tests/gemini-benchmark.test.mjs && node --experimental-transform-types tests/research-jobs.test.mjs && node --experimental-strip-types tests/iterative-research.test.mjs && node --experimental-transform-types tests/research-worker.test.mjs && node --experimental-transform-types tests/source-reader.test.mjs && node --experimental-strip-types tests/research-claims.test.mjs && node --experimental-strip-types tests/research-logs.test.mjs && node tests/research-report.test.mjs && node --experimental-transform-types tests/product-tools.test.mjs && node --experimental-transform-types tests/api-evidence.test.mjs && node --experimental-transform-types tests/tool-agent.test.mjs && node --experimental-transform-types tests/product-research-flow.test.mjs && node --experimental-transform-types tests/web-tools.test.mjs && node --experimental-transform-types tests/web-source-evidence.test.mjs && node --experimental-transform-types tests/web-research-flow.test.mjs && node --experimental-transform-types tests/provider-usage.test.mjs && node --experimental-transform-types tests/admin-usage.test.mjs && node --experimental-strip-types tests/admin-usage-webmcp.test.mjs && node --experimental-transform-types tests/adk-model.test.mjs && node --experimental-transform-types tests/adk-structured.test.mjs && node --experimental-transform-types tests/adk-workflow.test.mjs",
+    "worker:local": "node --experimental-transform-types scripts/research-local-worker.mjs",
+    "tools:status": "node --experimental-transform-types scripts/product-tools-status.mjs",
+    "tools:smoke:web": "node --experimental-transform-types scripts/web-tools-smoke.mjs",
+    "usage:status": "node --experimental-transform-types scripts/admin-usage-status.mjs",
+    "research:smoke:adk": "node --experimental-transform-types scripts/adk-smoke.mjs"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^2.0.71",
     "@base-ui/react": "^1.7.0",
+    "@google/adk": "2.2.1",
     "@hookform/resolvers": "^5.7.1",
+    "@libsql/client": "^0.15.15",
     "@shadcn/react": "^0.3.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
@@ -26,7 +34,7 @@
     "input-otp": "^1.4.2",
     "jose": "^6.2.12",
     "lucide-react": "^1.31.0",
-    "next": "16.3.4",
+    "next": "16.3.8",
     "next-themes": "^0.4.6",
     "radix-ui": "^1.6.7",
     "react": "19.2.6",
@@ -38,8 +46,7 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "3.6.0",
     "vaul": "^1.1.2",
-    "zod": "^3.25.76",
-    "@libsql/client": "^0.15.15"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.1",
@@ -48,7 +55,7 @@
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.3.8",
     "json-rpc-2.0": "1.7.1",
     "raw-body": "3.0.2",
     "tailwindcss": "4.2.1",
