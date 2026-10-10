@@ -158,5 +158,21 @@ try {
   await jobs.retryResearchJob('sdk-failure','owner');
   await runResearchJob(sdkFailure.id,{maxSteps:1},async(stage,context)=>{await context.beforeModelCall(100,200);return runner(stage,context);});
   assert.equal((await jobs.getResearchJob('sdk-failure','owner')).limits.attemptedCalls,2);assert.equal((await jobs.getResearchJob('sdk-failure','owner')).limits.attemptedToolCalls,1);
-  console.log('PASS: worker checkpoints/crash resume, bounded research, prior report retention, in-flight cancellation, concurrent dispatch, atomic publication fencing, brief/alert edits, authenticated API ownership and CSRF isolation; no network or email');
+  // Returned usage survives validation failure; checkpoint completion must
+  // not double-charge tokens already recorded by the model callback.
+  const metered=await create('metered-failure');
+  const observed={provider:'vertex',model:'gemini-3.8-flash',inputTokens:11,outputTokens:7,thinkingTokens:5,searchQueries:0};
+  assert.equal((await runResearchJob(metered.id,{maxSteps:1},async(_stage,context)=>{
+    await context.beforeModelCall(100,200);await context.onModelUsage(observed);
+    throw Object.assign(new Error('Truncated generation'),{code:'INCOMPLETE_OUTPUT'});
+  })).status,'failed');
+  const meteredPayload=async()=>JSON.parse((await client.execute({sql:'SELECT payload FROM research_jobs WHERE id=?',args:[metered.id]})).rows[0].payload);
+  assert.equal((await meteredPayload()).outputTokens,12);
+  await jobs.retryResearchJob('metered-failure','owner');
+  await runResearchJob(metered.id,{maxSteps:1},async(stage,context)=>{
+    await context.beforeModelCall(100,200);await context.onModelUsage(observed);
+    return {...await runner(stage,context),usage:observed};
+  });
+  assert.equal((await meteredPayload()).outputTokens,24);
+  console.log('PASS: worker checkpoints/crash resume, bounded research, prior report retention, in-flight cancellation, concurrent dispatch, atomic publication fencing, brief/alert edits, authenticated API ownership, token usage retained across failure without double counting; no network or email');
 }finally{globalThis.fetch=originalFetch;delete globalThis.__miranaResearchTestAfter;client?.close();await rm(directory,{recursive:true,force:true});for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

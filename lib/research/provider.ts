@@ -6,6 +6,7 @@ export type ResearchUsage = { provider: 'openai' | 'vertex'; model: string; inpu
 export type GroundedSource = { url: string; title: string; excerpts: string[] };
 export type ProviderAnswer = { text: string; sources: GroundedSource[]; searched: boolean; usage: ResearchUsage; diagnostics?:import('./tool-agent').ToolAgentDiagnostics };
 export type ProviderRequest = { instructions: string; input: Json; schema?: Json; search?: boolean;
+  maxOutputTokens?:number; onModelUsage?:(usage:ResearchUsage)=>Promise<void>;
   beforeModelCall?:(inputBytes:number,maxOutputTokens:number)=>Promise<void>;
   beforeToolCall?:(provider:string,tool:string)=>Promise<void> };
 export class ResearchProviderError extends Error {
@@ -86,7 +87,7 @@ export async function researchProviderRequest(request: ProviderRequest, signal: 
   if(provider==='vertex'&&process.env.RESEARCH_TOOLS_ENABLED==='true'){
     if(request.search){
       const {researchToolAgentRequest}=await import('./tool-agent');
-      return researchToolAgentRequest(request,signal,{beforeModelCall:request.beforeModelCall,beforeToolCall:request.beforeToolCall});
+      return researchToolAgentRequest(request,signal,{beforeModelCall:request.beforeModelCall,beforeToolCall:request.beforeToolCall,onModelUsage:request.onModelUsage});
     }
     const {researchAdkStructuredRequest}=await import('./adk-structured');
     return researchAdkStructuredRequest(request,signal);

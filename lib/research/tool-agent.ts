@@ -216,7 +216,8 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
         try{await options.beforeModelCall?.(bytes,max);}catch(error){gateError=error;throw error;}
         signal.throwIfAborted();diagnostics.modelCalls++;},
       onModelUsage:async(stepUsage)=>{usage.inputTokens+=stepUsage.inputTokens;usage.outputTokens+=stepUsage.outputTokens;
-        usage.thinkingTokens+=stepUsage.thinkingTokens;await options.onModelUsage?.(stepUsage);}});
+        usage.thinkingTokens+=stepUsage.thinkingTokens;
+        try{await options.onModelUsage?.(stepUsage);}catch(error){gateError=error;throw error;}}});
     const agent=new LlmAgent({name:'mirana_researcher',model,tools:Object.values(tools),instruction:()=>instructions,
       disallowTransferToParent:true,disallowTransferToPeers:true,generateContentConfig:{maxOutputTokens:outputTokens},
       beforeModelCallback:({request:modelRequest})=>{if(gateError)throw gateError;signal.throwIfAborted();

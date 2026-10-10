@@ -4,6 +4,7 @@ import { researchProviderRequest, type GroundedSource, type ResearchUsage, type 
 import {readSourcePages,sourcePageKind,type ReadSource} from './source-reader';
 import {listingApiSnapshots,mergeSourceSnapshots} from './api-evidence';
 import type {ProductObservation} from './product-tools';
+import {stageOutputTokens} from './output-budget';
 import {CLAIM_ASSESSMENT_SCHEMA,CLAIM_ASSESSMENT_INSTRUCTIONS,validateClaimAssessment,applyClaimLedger,requiredPlanCriteria,ambiguousExactVariant} from './claims';
 
 // Persisted stage envelopes have heterogeneous, runtime-validated contracts.
@@ -13,6 +14,7 @@ export type ResearchStage = 'plan' | 'gather' | 'read' | 'assess' | 'followup' |
 export type ResearchStageContext = { purchase: Json; outputs: Json; referenceDate: string; history?: Json[];
   beforeProvider?: (request:ProviderRequest)=>Promise<void>;
   beforeModelCall?:(inputBytes:number,maxOutputTokens:number)=>Promise<void>;
+  onModelUsage?:(usage:ResearchUsage)=>Promise<void>;
   beforeToolCall?:(provider:string,tool:string)=>Promise<void> };
 export type ResearchStageResult = { output: Json; nextStage: ResearchStage | null; usage?: ResearchUsage };
 const string = {type:'string'}, strings = {type:'array',items:string};
@@ -138,7 +140,7 @@ export async function runResearchStage(stage: ResearchStage, context: ResearchSt
   if (signal.aborted) throw new Error('Research was cancelled.');
   if (!Number.isFinite(Date.parse(context.referenceDate))) throw new Error('Research requires an explicit valid reference date.');
   const {purchase,outputs}=context, brief=researchBrief(purchase), RULES=researchRules();
-  async function ask(request:ProviderRequest) {await context.beforeProvider?.(request);return researchProviderRequest({...request,beforeModelCall:context.beforeModelCall,beforeToolCall:context.beforeToolCall},signal);}
+  async function ask(request:ProviderRequest) {await context.beforeProvider?.(request);return researchProviderRequest({...request,maxOutputTokens:stageOutputTokens(stage),beforeModelCall:context.beforeModelCall,beforeToolCall:context.beforeToolCall,onModelUsage:context.onModelUsage},signal);}
   const rounds=evidenceRounds(outputs), originals=originalSources(outputs);
   const sources:GroundedSource[]=originals.filter(source=>source.accessStatus==='read'&&source.bodyText).map(source=>({url:source.url,title:source.title,excerpts:source.paragraphs}));
   const base={brief,referenceDate:context.referenceDate,observedHistory:(context.history || []).slice(-40)};

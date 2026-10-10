@@ -21,7 +21,7 @@ export function canonicalResearchBrief(brief: RecordValue) {
 export function researchBriefHash(brief: RecordValue) {return createHash('sha256').update(JSON.stringify(canonicalResearchBrief(brief))).digest('hex');}
 function revision(brief: RecordValue) {return typeof brief.briefRevision==='number' && Number.isSafeInteger(brief.briefRevision) && brief.briefRevision >= 0 ? brief.briefRevision : 0;}
 function bound(name: string, fallback: number, maximum: number) {const value=Number(process.env[name]); return Number.isInteger(value)&&value>0 ? Math.min(value,maximum) : fallback;}
-function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',12,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',24000,48000)};}
+function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',12,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',process.env.RESEARCH_TOOLS_ENABLED==='true'?48000:24000,48000)};}
 const leaseMs=240000;
 const now=()=>new Date().toISOString();
 function event(stage: ResearchStage, message: string) {return {id:randomUUID(),at:now(),stage,message};}
@@ -128,6 +128,12 @@ export async function claimResearchJob(jobId: string) {
 }
 export async function assertResearchJobCurrent(jobId: string,token: string) {return mutate(jobId,token,()=>{});}
 type ResearchCallBudget={inputTokens?:number;maxOutputTokens?:number;pendingOutputTokens?:number;reserveCalls?:number;reserveOutputTokens?:number};
+// Account for every returned generation even when parsing or validation fails.
+export async function recordResearchUsage(jobId:string,token:string,usage:ResearchUsage){
+  const input=usage.inputTokens??0,output=usage.outputTokens??0;
+  if(!Number.isSafeInteger(input)||input<0||!Number.isSafeInteger(output)||output<0)throw new Error('Invalid research usage.');
+  return mutate(jobId,token,(_tx,job)=>{job.inputTokens+=input;job.outputTokens+=output;});
+}
 function callBudget(request:ResearchCallBudget) {
   const values={input:request.inputTokens??0,output:request.maxOutputTokens??0,pending:request.pendingOutputTokens??0,reserveCalls:request.reserveCalls??0,reserveOutput:request.reserveOutputTokens??0};
   if(Object.values(values).some(value=>!Number.isSafeInteger(value)||value<0))throw new Error('Invalid research request budget.');

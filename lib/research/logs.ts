@@ -1,7 +1,7 @@
 // Server-only diagnostics. Never accept provider bodies, prompts, URLs or identities.
 import {createHash} from 'node:crypto';
 
-const events = ['started','completed','failed','retry','lease','cancel','publish','source-read','model-call','tool-call'] as const;
+const events = ['started','completed','failed','retry','lease','cancel','publish','source-read','model-call','model-usage','tool-call'] as const;
 const toolProviders = ['serpapi','rainforest','brightdata','keepa','serpapi-mcp','brightdata-mcp','original-page','firecrawl','tavily'] as const;
 const toolNames = ['search_products_india','fetch_product_listing','amazon_price_history','search','search_engine','scrape_as_markdown','read_source_page','search_web_tavily','read_source_tavily','search_web_firecrawl','read_source_firecrawl'] as const;
 const stages = ['plan','gather','read','assess','followup','synthesize','verify','publish'] as const;

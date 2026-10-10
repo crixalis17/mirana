@@ -29,11 +29,11 @@ const price = z.number().finite().positive().max(10000000);
 const priceJson = { type: 'number', exclusiveMinimum: 0, maximum: 10000000 };
 const postcode = z.string().trim().regex(/^(?:\d{6})?$/);
 const defaultPostcode = z.string().trim().refine(value => value === '' || /^\d{6}$/.test(value), 'Use six digits or leave the default blank.');
-const alertShape = { enabled: z.boolean(), mode: z.enum(['daily', 'interval']).optional(), intervalHours: z.number().int().min(1).max(168).optional(),
-  dailyHour: z.number().int().min(0).max(23).optional(), rule: z.enum(['history', 'target']).optional(), targetPrice: price.nullable().optional() };
+const alertShape = { enabled: z.boolean(), mode: z.enum(['daily', 'interval']).optional(), intervalHours: z.literal(24).optional(),
+  dailyHour: z.literal(10).optional(), rule: z.enum(['history', 'target']).optional(), targetPrice: price.nullable().optional() };
 const alertSchema = z.object(alertShape).strict().refine(value => value.rule !== 'target' || typeof value.targetPrice === 'number', 'A target rule requires a target price.');
 const alertJson = obj({ enabled: { type: 'boolean' }, mode: { type: 'string', enum: ['daily', 'interval'] },
-  intervalHours: { type: 'integer', minimum: 1, maximum: 168 }, dailyHour: { type: 'integer', minimum: 0, maximum: 23 },
+  intervalHours: { type: 'integer', enum:[24] }, dailyHour: { type: 'integer', enum:[10] },
   rule: { type: 'string', enum: ['history', 'target'] }, targetPrice: { ...priceJson, type: ['number', 'null'] } }, ['enabled']);
 
 function productLink(value: string) {

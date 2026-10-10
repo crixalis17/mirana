@@ -32,6 +32,14 @@ for(const text of ['not JSON','{"category":"","score":2}','{"category":"Laptop",
  await assert.rejects(researchAdkStructuredRequest(request,signal,{env,fetch:async()=>response(text)}),e=>e.code==='INVALID_OUTPUT'&&!e.message.includes(text));
 }
 await assert.rejects(researchAdkStructuredRequest(request,signal,{env,fetch:async()=>response('{"category":"Laptop","score":2}','MAX_TOKENS')}),e=>e.code==='INCOMPLETE_OUTPUT');
+// HIGH thinking shares the output allowance. Truncated answers must still
+// report paid usage without accepting partial JSON.
+let truncatedUsage;
+await assert.rejects(researchAdkStructuredRequest({...request,maxOutputTokens:16384,onModelUsage:async usage=>{truncatedUsage=usage;}},signal,{env,fetch:async(_url,init)=>{
+ assert.equal(JSON.parse(init.body).generationConfig.maxOutputTokens,16384);
+ return response('{"category":"Laptop","score":2}','MAX_TOKENS');
+}}),e=>e.code==='INCOMPLETE_OUTPUT');
+assert.equal(truncatedUsage.thinkingTokens,5);assert.equal(truncatedUsage.outputTokens,7);
 await assert.rejects(researchAdkStructuredRequest(request,signal,{env,fetch:async()=>new Response('private provider token',{status:429})}),e=>e.code==='RATE_LIMIT'&&e.retryable&&!e.message.includes('private'));
 await assert.rejects(researchAdkStructuredRequest(request,signal,{env,fetch:async()=>{throw new Error(`provider detail ${env.GOOGLE_API_KEY}`);}}),e=>!e.message.includes(env.GOOGLE_API_KEY));
 await assert.rejects(researchAdkStructuredRequest(request,signal,{env,fetch:async()=>Response.json({candidates:[{content:{role:'model',parts:[{functionCall:{name:'send_email',args:{body:'malicious'}}}]},finishReason:'STOP'}]})}),e=>e.code==='INVALID_OUTPUT');

@@ -4,6 +4,8 @@ import { researchProviderConfigured, runResearchStage, refreshSavedOffers } from
 import { ensureResearchJob, listRunnableResearchJobs, claimResearchJob, assertResearchJobCurrent, reserveResearchCall,
   completeResearchStep, finishResearchJob, failResearchJob, releaseResearchJob, checkResearchInputBudget, checkResearchModelBudget, reserveResearchToolCall, finalizeResearchFromSavedAssessment, ResearchJobError } from './research-jobs';
 import type { ProviderRequest } from './research/provider';
+import {recordResearchUsage} from './research-jobs';
+import {stageOutputTokens,finalOutputReserve} from './research/output-budget';
 import { logResearchEvent, safeResearchErrorCode } from './research/logs';
 export { cronAuthorized } from './research/cron-auth';
 export const workerConfigured = researchProviderConfigured;
@@ -23,7 +25,8 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
     while (steps < (options.maxSteps ?? 12)) {
       job = await assertResearchJobCurrent(jobId, token);
       const remainingSteps=job.stage==='followup'?3:job.stage==='assess'?2:0;
-      if(remainingSteps&&job.outputs.assess&&(job.attemptedCalls+remainingSteps>job.limits.maxCalls||job.outputTokens+remainingSteps*6000>job.limits.maxOutputTokens)){
+      const remainingOutput=stageOutputTokens('assess')+finalOutputReserve()+(job.stage==='followup'?6000:0);
+      if(remainingSteps&&job.outputs.assess&&(job.attemptedCalls+remainingSteps>job.limits.maxCalls||job.outputTokens+remainingOutput>job.limits.maxOutputTokens)){
         job=await finalizeResearchFromSavedAssessment(jobId,token);
         logResearchEvent({jobId,event:'lease',stage:'synthesize',attempt:job.attemptedCalls,errorCode:'BUDGET_EXHAUSTED'});
       }
@@ -45,7 +48,7 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
       const billable = billableStages.has(stage);
       if (Date.now() + (billable ? stepTimeout() + 10000 : 50000) > deadline) break;
       const observations = await db().prepare('SELECT payload FROM observations WHERE purchase_id=?').bind(job.purchaseId).all();
-      let firstGeneration=true,pendingOutputTokens=0,stageInputEstimate=0;
+      let firstGeneration=true,pendingOutputTokens=0,stageInputEstimate=0,usageRecorded=false;
       const input = { purchase: job.purchase, outputs: job.outputs, referenceDate: job.referenceDate,
         history: observations.results.map(row => JSON.parse(String(row.payload))).slice(-40),
         beforeProvider:async(request:ProviderRequest)=>{job=await checkResearchInputBudget(jobId,token,
@@ -55,10 +58,15 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
           // Bytes conservatively bound tokens, including returned tool observations.
           const estimate=stageInputEstimate+inputBytes;
           const reserveCalls=stage==='gather'||stage==='followup'?2:stage==='synthesize'?0:1;
-          const request={inputTokens:estimate,maxOutputTokens,pendingOutputTokens,reserveCalls,reserveOutputTokens:stage==='synthesize'?0:6000};
+          const request={inputTokens:estimate,maxOutputTokens,pendingOutputTokens,reserveCalls,reserveOutputTokens:stage==='synthesize'?0:finalOutputReserve()};
           job=firstGeneration?await checkResearchModelBudget(jobId,token,request):await reserveResearchCall(jobId,token,request);
           firstGeneration=false;stageInputEstimate=estimate;pendingOutputTokens+=maxOutputTokens;
           logResearchEvent({jobId,event:'model-call',stage,attempt:job.attemptedCalls,inputBytes,maxOutputTokens});
+        },
+        onModelUsage:async(usage:NonNullable<Awaited<ReturnType<StageRunner>>['usage']>)=>{
+          job=await recordResearchUsage(jobId,token,{inputTokens:usage.inputTokens,outputTokens:usage.outputTokens+usage.thinkingTokens});
+          usageRecorded=true;pendingOutputTokens=0;stageInputEstimate=0;
+          logResearchEvent({jobId,event:'model-usage',stage,attempt:job.attemptedCalls,...usage});
         },
         beforeToolCall:async(provider:string,tool:string)=>{
           job=await reserveResearchToolCall(jobId,token);
@@ -66,7 +74,7 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
         } };
       if (billable) {
         // Conservative estimate: provider search context is separately metered, so this is not an invoice ceiling.
-        job = await reserveResearchCall(jobId, token, { maxOutputTokens: 6000 });
+        job = await reserveResearchCall(jobId, token, { maxOutputTokens: stageOutputTokens(stage) });
       }
       const started = Date.now();
       logResearchEvent({jobId,event:'started',stage,attempt:job.attemptedCalls,round:job.rounds,maxCalls:job.limits.maxCalls,maxRounds:job.limits.maxRounds});
@@ -76,11 +84,11 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
       if (!next) throw new Error('Research stage returned no continuation.');
       const outputUsage=result.usage?(result.usage.outputTokens+(result.usage.thinkingTokens||0)):0;
       if (next === 'followup' && (job.rounds >= job.limits.maxRounds || job.attemptedCalls + 3 > job.limits.maxCalls ||
-        job.outputTokens+outputUsage+18000>job.limits.maxOutputTokens)) {
+        job.outputTokens+(usageRecorded?0:outputUsage)+6000+stageOutputTokens('assess')+finalOutputReserve()>job.limits.maxOutputTokens)) {
         next = 'synthesize';
         result.output.gaps=[...new Set([...(result.output.gaps||[]),'Follow-up limits reached; remaining gaps are carried into the final report.'])];
       }
-      job = await completeResearchStep(jobId, token, stage, result.output, next, undefined, result.usage ? {
+      job = await completeResearchStep(jobId, token, stage, result.output, next, undefined, result.usage && !usageRecorded ? {
         inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens + (result.usage.thinkingTokens || 0),
       } : {});
       logResearchEvent({jobId,event:'completed',stage,elapsedMs:Date.now()-started,attempt:job.attemptedCalls,

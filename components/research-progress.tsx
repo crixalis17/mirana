@@ -37,6 +37,7 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let consecutiveFailures = 0;
+    let lastWake = 0;
     async function poll() {
       try {
         const response = await fetch(`/api/research?purchaseId=${encodeURIComponent(purchaseId)}`, {
@@ -50,6 +51,15 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
         consecutiveFailures = 0;
         const job = researchJobView(result.job);
         setState({job, loaded: true, error: ''});
+        // A completed checkpoint may outlive one hosting invocation. Continue
+        // this already-authorized job while its owner is viewing it; the daily
+        // dispatcher remains the fallback after the page is closed.
+        if(job?.status === 'queued' && strings(job.completedSteps).length && canResearch && !itemInactive && Date.now()-lastWake>15000){
+          lastWake=Date.now();
+          const resumed=await fetch('/api/research',{method:'POST',credentials:'same-origin',cache:'no-store',signal:controller.signal,
+            headers:{'Content-Type':'application/json'},body:JSON.stringify({purchaseId})});
+          if(!resumed.ok)throw new ProgressReadError('Could not continue saved research.',resumed.status>=500||resumed.status===429);
+        }
         if (job?.status === 'completed' && typeof job.id === 'string' && refreshedJob.current !== job.id) {
           refreshedJob.current = job.id;
           await latestUpdate.current();
@@ -69,7 +79,7 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
     }
     void poll();
     return () => {controller.abort(); if (timer) clearTimeout(timer);};
-  }, [purchaseId, refreshKey, revision]);
+  }, [purchaseId, refreshKey, revision, canResearch, itemInactive]);
 
   async function change(action: 'start' | 'cancel' | 'retry') {
     mutation.current?.abort();
@@ -125,6 +135,7 @@ export function ResearchProgress({purchaseId, refreshKey, canResearch, itemInact
     {error ? <p className="error" role="alert">{error} <button className="text-link" disabled={busy} onClick={() => setRevision(value => value + 1)}>Check again</button></p> : null}
     <div className="status-actions">
       {active ? <button className="outline-button" disabled={busy} onClick={() => change('cancel')}>{busy ? 'Updating…' : 'Cancel research'}</button> : null}
+      {status==='queued'&&strings(job?.completedSteps).length ? <button className="outline-button" disabled={busy||!canResearch||itemInactive} onClick={()=>change('start')}>Continue research</button> : null}
       {['failed', 'cancelled'].includes(status) ? <button className="outline-button" disabled={busy || !canResearch || itemInactive} onClick={() => change('retry')}>{busy ? 'Updating…' : 'Retry research'}</button> : null}
       {loaded && !job && !error && canStart ? <button className="outline-button" disabled={busy || !canResearch || itemInactive} onClick={() => change('start')}>{busy ? 'Starting…' : 'Start research'}</button> : null}
     </div>

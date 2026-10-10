@@ -15,17 +15,18 @@ export async function researchAdkStructuredRequest(request:ProviderRequest,signa
   if(request.search)throw new ResearchProviderError('Search requires the registered research tool agent.','PROVIDER_REJECTED');
   configureAdkPrivacy();
   const env=options.env||process.env;
+  const maxOutputTokens=request.maxOutputTokens??6000;
   const usage:ResearchUsage={provider:'vertex',model:'gemini-3.8-flash',inputTokens:0,outputTokens:0,thinkingTokens:0,searchQueries:0};
-  const model=createAdkVertexModel({env,fetch:options.fetch,signal,maxOutputTokens:6000,
+  const model=createAdkVertexModel({env,fetch:options.fetch,signal,maxOutputTokens,
     beforeModelCall:request.beforeModelCall,
     onModelUsage:async observed=>{usage.inputTokens+=observed.inputTokens;usage.outputTokens+=observed.outputTokens;
-      usage.thinkingTokens+=observed.thinkingTokens;usage.searchQueries+=observed.searchQueries;}});
+      usage.thinkingTokens+=observed.thinkingTokens;usage.searchQueries+=observed.searchQueries;await request.onModelUsage?.(observed);}});
   const agent=new LlmAgent({name:'mirana_structured_stage',model,
     // An instruction provider avoids ADK interpreting literal braces in the
     // stage's contract as session-state substitution placeholders.
     instruction:()=>request.instructions,
     tools:[],disallowTransferToParent:true,disallowTransferToPeers:true,
-    generateContentConfig:{maxOutputTokens:6000},
+    generateContentConfig:{maxOutputTokens},
     // ADK disallows responseSchema in constructor configuration. A callback
     // supplies the provider contract without ADK parsing or logging raw output;
     // the existing strict validator remains the authoritative final check.
@@ -52,7 +53,7 @@ export async function researchAdkStructuredRequest(request:ProviderRequest,signa
     // Preserve worker fencing errors: they decide whether a checkpoint may be
     // retried and must never be replaced by a provider retry.
     const code=error&&typeof error==='object'&&'code' in error?error.code:undefined;
-    if(code==='lease_lost'||code==='budget_exhausted')throw error;
+    if(['lease_lost','budget_exhausted','cancelled','superseded'].includes(String(code)))throw error;
     if(signal.aborted)throw new ResearchProviderError('Research request was interrupted.','INTERRUPTED',true);
     throw new ResearchProviderError('Research stage returned invalid output or could not complete.','INVALID_OUTPUT');
   }
