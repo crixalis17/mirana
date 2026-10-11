@@ -64,7 +64,13 @@ async function response(input: Json, key: string, signal: AbortSignal) {
 
 // Exact allowlist, no redirects: model/user links cannot turn this fetch into arbitrary server requests.
 const RETAIL_HOSTS = new Set(['amazon.in', 'www.amazon.in', 'flipkart.com', 'www.flipkart.com', 'apple.com', 'www.apple.com', 'samsung.com', 'www.samsung.com', 'croma.com', 'www.croma.com', 'reliancedigital.in', 'www.reliancedigital.in', 'mi.com', 'www.mi.com', 'lenovo.com', 'www.lenovo.com', 'asus.com', 'www.asus.com', 'in.store.asus.com', 'hp.com', 'www.hp.com', 'cowayindia.in', 'www.cowayindia.in', 'philips.co.in', 'www.philips.co.in', 'www.domesticappliances.philips.co.in']);
-export function canFetchListing(url: string) { const key = sourceKey(url); return !!key && RETAIL_HOSTS.has(new URL(key).hostname); }
+export function canFetchListing(url: string) {
+  const key=sourceKey(url);if(!key)return false;const parsed=new URL(key);
+  // Appliance manufacturers discovered by the agent remain exact-host scoped.
+  if(['lg.com','www.lg.com'].includes(parsed.hostname))return parsed.pathname==='/in'||parsed.pathname.startsWith('/in/');
+  if(['whirlpoolindia.com','www.whirlpoolindia.com'].includes(parsed.hostname))return true;
+  return RETAIL_HOSTS.has(parsed.hostname);
+}
 
 export function listingReceipt(html: string, name: string, variant: string): Json | null {
   const nodes: Json[] = [];

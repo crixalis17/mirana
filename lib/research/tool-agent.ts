@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {FunctionCallingConfigMode} from '@google/genai';
 import {LlmAgent, GOOGLE_SEARCH, isFinalResponse, type BaseTool} from '@google/adk';
 import {createAdkVertexModel} from './adk-model';
 import {runIsolatedAdk} from './adk-runtime';
@@ -19,7 +20,9 @@ export type ResearchToolTrace = {tool:string;provider:string;status:'ok'|'unavai
 export type McpEvidenceSource = {url:string;retailerUrl:string|null;provider:'serpapi-mcp'|'brightdata-mcp';tool:string;bodyText:string;contentHash:string;retrievedAt:string;textTrust:'untrusted-provider-mcp';evidenceKind:'search-result'|'page-extraction'};
 export type ToolAgentDiagnostics = {runtime:'google-adk';toolCalls:ResearchToolTrace[];apiSources:ProductApiSource[];observations:ProductObservation[];originalSources:ReadSource[];mcpSources:McpEvidenceSource[];readiness:ReturnType<typeof productToolsConfigured> & ReturnType<typeof webToolsConfigured> & {serpapiMcp:boolean;brightdataMcp:boolean};limitations:string[];modelCalls:number;budgetExhausted:boolean};
 export type ToolAgentAnswer = ProviderAnswer & {diagnostics:ToolAgentDiagnostics};
-export type ToolAgentOptions = {env?:AgentEnv;fetch?:typeof fetch;maxSteps?:number;maxOutputTokens?:number;nativeOnly?:boolean;
+export type ToolAgentOptions = {env?:AgentEnv;fetch?:typeof fetch;maxSteps?:number;maxOutputTokens?:number;nativeOnly?:boolean;allowedTools?:readonly string[];maxToolCalls?:number;retrievalOnly?:boolean;
+  onToolOutput?:(tool:string,output:unknown)=>void;
+  onToolInput?:(tool:string,input:Record<string,unknown>)=>void;
   beforeModelCall?:(inputBytes:number,maxOutputTokens:number)=>Promise<void>;
   beforeToolCall?:(provider:string,tool:string)=>Promise<void>;
   onModelUsage?:(usage:ResearchUsage)=>Promise<void>;
@@ -106,16 +109,24 @@ function searchRecords(value:unknown):Array<{url:string;title:string;excerpt:str
 export async function researchToolAgentRequest(request:ProviderRequest,signal:AbortSignal,options:ToolAgentOptions={}):Promise<ToolAgentAnswer> {
   if(typeof window!=='undefined')throw new ResearchProviderError('Research tools are server-only.','SERVER_ONLY');
   signal.throwIfAborted();const env=options.env??process.env,fetcher=options.fetch??fetch,endpoint=toolAgentVertexEndpoint(env);
-  const steps=Math.max(2,Math.min(8,Number.isInteger(options.maxSteps)?options.maxSteps!:TOOL_AGENT_LIMITS.steps));
+  const steps=Math.max(2,Math.min(24,Number.isInteger(options.maxSteps)?options.maxSteps!:TOOL_AGENT_LIMITS.steps));
   const outputTokens=Math.max(1000,Math.min(65536,Number.isInteger(options.maxOutputTokens)?options.maxOutputTokens!:65536));
+  const toolCallLimit=Math.max(1,Math.min(48,Number.isInteger(options.maxToolCalls)?options.maxToolCalls!:TOOL_AGENT_LIMITS.clientToolCalls));
   const readiness={...productToolsConfigured(env),...webToolsConfigured(env),serpapiMcp:!!env.SERPAPI_API_KEY,brightdataMcp:!!env.BRIGHT_DATA_API_TOKEN};
   const diagnostics:ToolAgentDiagnostics={runtime:'google-adk',toolCalls:[],apiSources:[],observations:[],originalSources:[],mcpSources:[],readiness,limitations:[],modelCalls:0,budgetExhausted:false};
+  const allowed=(name:string)=>!options.allowedTools||options.allowedTools.includes(name);
+  const makeTool:typeof createResearchFunctionTool=(definition,execute)=>createResearchFunctionTool(definition,async(input)=>{
+    try{options.onToolInput?.(definition.name,JSON.parse(maskSecrets(JSON.stringify(input),env)));}catch{/* Diagnostic callbacks never affect tool execution. */}
+    const result=await execute(input);
+    try{options.onToolOutput?.(definition.name,JSON.parse(maskSecrets(JSON.stringify(result),env)));}catch{/* Diagnostic callbacks never affect tool execution. */}
+    return result;
+  });
   const discoveryTools=new Set<string>(request.search?[
     ...(readiness.serpapi?['search_products_india']:[]),
     ...(readiness.tavily.ready?['search_web_tavily']:[]),
     ...(readiness.firecrawl.ready?['search_web_firecrawl']:[]),
     ...(readiness.serpapiMcp||readiness.brightdataMcp?['search_web_mcp']:[]),
-  ]:[]);
+  ].filter(allowed):[]);
   const failedDiscovery=new Set<string>();let usableExternalDiscovery=false,nativeSearchAvailableForCall=false;
   const nativeSearchConfigured=!!request.search&&env.RESEARCH_NATIVE_SEARCH_ENABLED==='true';
   const nativeSearchAllowed=()=>nativeSearchConfigured&&!usableExternalDiscovery&&[...discoveryTools].every(name=>failedDiscovery.has(name));
@@ -137,7 +148,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
     const safeExcerpt=maskSecrets(excerpt,env).slice(0,1800);if(safeExcerpt&&!source.excerpts.includes(safeExcerpt)&&source.excerpts.length<12)source.excerpts.push(safeExcerpt);sources.set(url,source);};
   async function traced<T>(name:string,provider:string,execute:()=>Promise<T>,counts:(result:T)=>{sources:number;offers:number;ok:boolean;unavailable?:boolean;errorCode?:string;discoverySources?:number}) {
     if(gateError)throw gateError;signal.throwIfAborted();const start=Date.now();
-    if(executions++>=TOOL_AGENT_LIMITS.clientToolCalls){trace({tool:name,provider,status:'limited',elapsedMs:0,sourceCount:0,offerCount:0});return {ok:false,error:{code:'TOOL_LIMIT',message:'Research tool execution budget exhausted.'}};}
+    if(executions++>=toolCallLimit){trace({tool:name,provider,status:'limited',elapsedMs:0,sourceCount:0,offerCount:0});return {ok:false,error:{code:'TOOL_LIMIT',message:'Research tool execution budget exhausted.'}};}
     try {const result=await execute();signal.throwIfAborted();const stats=counts(result);
       if(discoveryTools.has(name)&&stats.errorCode!=='INVALID_INPUT'){
         if(stats.ok&&(stats.discoverySources??stats.sources)>0)usableExternalDiscovery=true;
@@ -174,7 +185,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
   for(const definition of WEB_TOOL_DEFINITIONS){
     const provider=definition.name.endsWith('tavily')?'tavily':'firecrawl';
     if(!readiness[provider].ready||definition.name.startsWith('search_')&&!request.search)continue;
-    tools[definition.name]=createResearchFunctionTool(definition,async(input)=>traced(definition.name,provider,async()=>{
+    tools[definition.name]=makeTool(definition,async(input)=>traced(definition.name,provider,async()=>{
       const cacheKey=JSON.stringify([definition.name,input]);let pending=webRequests.get(cacheKey);
       if(!pending){pending=executeWebTool(definition.name,input,signal,{env,fetch:fetcher,beforeToolCall:reserveTool});webRequests.set(cacheKey,pending);}
       const result=await pending;
@@ -185,7 +196,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
       if(result.error&&!diagnostics.limitations.includes(result.error.message))diagnostics.limitations.push(result.error.message);
       return result;},result=>({sources:result.sources.length+(result.source?1:0),offers:0,ok:result.ok,unavailable:result.error?.code==='NOT_CONFIGURED'||result.error?.code==='ACCESS_DENIED',errorCode:result.error?.code})));
   }
-  for(const definition of PRODUCT_TOOL_DEFINITIONS)tools[definition.name]=createResearchFunctionTool(definition,async(input)=>traced(definition.name,'product-api',async()=>{
+  for(const definition of PRODUCT_TOOL_DEFINITIONS)tools[definition.name]=makeTool(definition,async(input)=>traced(definition.name,'product-api',async()=>{
     const cacheKey=JSON.stringify([definition.name,input]);
     let pending=productRequests.get(cacheKey);
     if(!pending){pending=executeProductTool(definition.name,input,signal,{env,fetch:fetcher,beforeToolCall:(name,provider)=>reserveTool(provider,name)});productRequests.set(cacheKey,pending);}
@@ -197,7 +208,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
     for(const lead of result.discoveryLeads||[])add(lead.url,lead.title,'Google Shopping discovery lead. Merchant URL and checkout are unverified; find the exact retailer listing separately.');
     return result;},result=>({sources:result.sources.length,offers:result.offers.length,ok:result.ok,unavailable:result.error?.code==='NOT_CONFIGURED',errorCode:result.error?.code,
       ...(definition.name==='search_products_india'?{discoverySources:result.offers.length+(result.discoveryLeads?.length||0)}:{})})));
-  tools.read_source_page=createResearchFunctionTool({name:'read_source_page',description:'Read bounded original text only from approved official India stores, retailers, professional review sites or Reddit. This never performs checkout.',inputSchema:{type:'object',properties:{url:{type:'string',format:'uri',maxLength:2000}},required:['url'],additionalProperties:false}},async(input)=>{const url=String(input.url);return traced('read_source_page','original-page',async()=>{
+  tools.read_source_page=makeTool({name:'read_source_page',description:'Read bounded original text only from approved official India stores, retailers, professional review sites or Reddit. This never performs checkout.',inputSchema:{type:'object',properties:{url:{type:'string',format:'uri',maxLength:2000}},required:['url'],additionalProperties:false}},async(input)=>{const url=String(input.url);return traced('read_source_page','original-page',async()=>{
     const key=sourceKey(url);if(!key||sourcePageKind(key)==='unknown')return {ok:false,source:null};
     if(sourceReads++>=TOOL_AGENT_LIMITS.sourceReads)return {ok:false,source:null};
     await reserveTool('original-page','read_source_page');
@@ -205,7 +216,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
     if(source.accessStatus==='read')for(const paragraph of source.paragraphs)add(source.url,source.title,paragraph);
     return {ok:source.accessStatus==='read',source};},result=>({sources:result.ok?1:0,offers:0,ok:result.ok}));});
   if(nativeSearchConfigured)tools.google_search=GOOGLE_SEARCH;
-  if(request.search&&(readiness.serpapiMcp||readiness.brightdataMcp))tools.search_web_mcp=createResearchFunctionTool({name:'search_web_mcp',description:'Search public web results through a configured read-only MCP provider. Search snippets are leads and must be read before supporting product/review claims.',inputSchema:{type:'object',properties:{query:{type:'string',minLength:2,maxLength:400}},required:['query'],additionalProperties:false}},async(input)=>{const query=String(input.query).trim();
+  if(request.search&&(readiness.serpapiMcp||readiness.brightdataMcp))tools.search_web_mcp=makeTool({name:'search_web_mcp',description:'Search public web results through a configured read-only MCP provider. Search snippets are leads and must be read before supporting product/review claims.',inputSchema:{type:'object',properties:{query:{type:'string',minLength:2,maxLength:400}},required:['query'],additionalProperties:false}},async(input)=>{const query=String(input.query).trim();
     const provider=readiness.serpapiMcp?'serpapi':'brightdata',name=provider==='serpapi'?'search':'search_engine';
     return traced('search_web_mcp',`${provider}-mcp`,async()=>{
       const connection=await client(provider),arguments_=provider==='serpapi'?{params:{engine:'google',q:query,gl:'in',hl:'en',google_domain:'google.co.in',num:6,no_cache:true},mode:'compact'}:{query,engine:'google'};
@@ -216,7 +227,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
       for(const match of matches){add(match.url,match.title,match.excerpt);
         const bodyText=maskSecrets(JSON.stringify(match),env);diagnostics.mcpSources.push({url:provider==='serpapi'?'https://mcp.serpapi.com/mcp':'https://mcp.brightdata.com/mcp',retailerUrl:match.url,provider:`${provider}-mcp`,tool:name,bodyText,contentHash:createHash('sha256').update(bodyText).digest('hex'),retrievedAt,textTrust:'untrusted-provider-mcp',evidenceKind:'search-result'});}
       return {ok:true,sources:matches,text:payload.text};},result=>({sources:result.sources.length,offers:0,ok:result.ok}));});
-  if(readiness.brightdataMcp)tools.read_source_mcp=createResearchFunctionTool({name:'read_source_mcp',description:'Read an approved original page via Bright Data MCP extraction when direct reading fails. Returned text is provider extraction and must not be called independent checkout verification.',inputSchema:{type:'object',properties:{url:{type:'string',format:'uri',maxLength:2000}},required:['url'],additionalProperties:false}},async(input)=>{const url=String(input.url);return traced('read_source_mcp','brightdata-mcp',async()=>{
+  if(readiness.brightdataMcp)tools.read_source_mcp=makeTool({name:'read_source_mcp',description:'Read an approved original page via Bright Data MCP extraction when direct reading fails. Returned text is provider extraction and must not be called independent checkout verification.',inputSchema:{type:'object',properties:{url:{type:'string',format:'uri',maxLength:2000}},required:['url'],additionalProperties:false}},async(input)=>{const url=String(input.url);return traced('read_source_mcp','brightdata-mcp',async()=>{
     const key=sourceKey(url);if(!key||sourcePageKind(key)==='unknown')return {ok:false,source:null};
     const connection=await client('brightdata');await reserveTool('brightdata-mcp','scrape_as_markdown');
     const raw=await connection.callTool({name:'scrape_as_markdown',arguments:{url:key},options:{signal,timeout:20000}}),payload=mcpPayload(raw,env);
@@ -236,6 +247,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
       onModelUsage:async(stepUsage)=>{usage.inputTokens+=stepUsage.inputTokens;usage.outputTokens+=stepUsage.outputTokens;
         usage.thinkingTokens+=stepUsage.thinkingTokens;
         try{await options.onModelUsage?.(stepUsage);}catch(error){gateError=error;throw error;}}});
+    for(const name of Object.keys(tools))if(!allowed(name))delete tools[name];
     if(options.nativeOnly)for(const name of Object.keys(tools))if(name!=='google_search')delete tools[name];
     const agent=new LlmAgent({name:'mirana_researcher',model,tools:Object.values(tools),instruction:()=>instructions,
       disallowTransferToParent:true,disallowTransferToPeers:true,generateContentConfig:{maxOutputTokens:outputTokens},
@@ -248,8 +260,16 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
         }
         // Reserve the final generation for a summary without another paid tool
         // dispatch. The durable job budget remains the authority on each call.
-        if(diagnostics.modelCalls===steps-1||executions>=TOOL_AGENT_LIMITS.clientToolCalls){
-          modelRequest.config.tools=[];modelRequest.toolsDict={};modelRequest.config.toolConfig=undefined;
+        if(diagnostics.modelCalls===steps-1||executions>=toolCallLimit){
+          // Removing declarations alone lets Gemini replay earlier function calls.
+          // Keep function schemas but explicitly disable function calling for this
+          // final text turn; no further provider dispatch is permitted.
+          modelRequest.config.tools=(modelRequest.config.tools||[]).filter(tool=>!record(tool).googleSearch);
+          modelRequest.config.toolConfig=modelRequest.config.tools.length?{functionCallingConfig:{mode:FunctionCallingConfigMode.NONE}}:undefined;
+          const stopInstruction='Tool retrieval has ended at the configured call boundary. Produce the final response now from returned evidence only. Do not emit function calls, invent missing facts, or fill gaps from memory.';
+          const existing=modelRequest.config.systemInstruction;
+          modelRequest.config.systemInstruction=typeof existing==='string'?`${existing}\n${stopInstruction}`:
+            {parts:[...(record(existing).parts as Array<{text:string}>||[]),{text:stopInstruction}]};
           nativeSearchAvailableForCall=false;
         }
         if(request.schema){modelRequest.config.responseMimeType='application/json';
@@ -275,11 +295,14 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
     let finalText='',finished=false;
     for await(const event of runIsolatedAdk(agent,request.input,signal,steps)){
       if(event.errorCode)throw new ResearchProviderError('Research returned an unusable answer.','INVALID_OUTPUT');
+      if(options.retrievalOnly&&(diagnostics.modelCalls>=steps-1||executions>=toolCallLimit)&&event.content?.parts?.some(part=>part.functionResponse))break;
       if(isFinalResponse(event)){
         finalText=(event.content?.parts||[]).filter(part=>!part.thought&&typeof part.text==='string').map(part=>part.text).join('\n');
         finished=event.finishReason==='STOP';
       }
     }
+    if(options.retrievalOnly){usage.searchQueries=googleSearches+mcpSearches;
+      return {text:'Retrieval stopped before assessment, ranking and recommendations. Inspect executed tool receipts.',sources:[...sources.values()],searched:diagnostics.toolCalls.some(call=>call.status==='ok'&&discoveryTools.has(call.tool)),usage,diagnostics};}
     signal.throwIfAborted();const text=maskSecrets(finalText.trim(),env);usage.searchQueries=googleSearches+mcpSearches;
     if(!text||!finished)throw new ResearchProviderError('Research did not produce a complete answer.','INCOMPLETE_OUTPUT');
     if(request.schema){let parsed:unknown;try{parsed=JSON.parse(text);}catch{throw new ResearchProviderError('Research returned malformed structured output.','INVALID_OUTPUT');}

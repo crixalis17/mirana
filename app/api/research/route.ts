@@ -27,7 +27,9 @@ export async function POST(request: Request) {
   const identity = await user(request);
   if (!identity) return Response.json({ error: 'Sign in with Google to continue.' }, { status: 401, headers: noCache });
   try {
-    const data = await body(request);
+    let data;
+    try { data = await body(request); }
+    catch { return Response.json({ error: 'Send a valid same-origin JSON request.' }, { status: 400, headers: noCache }); }
     if (!validId(data.purchaseId) || Object.keys(data).some(key => key !== 'purchaseId')) return Response.json({ error: 'Choose a valid shopping item.' }, { status: 400 });
     const row = await owned(data.purchaseId, identity.id);
     if (!row) return Response.json({ error: 'Shopping item not found.' }, { status: 404 });

@@ -89,3 +89,8 @@ try {
 }finally{globalThis.fetch=originalFetch;if(originalKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=originalKey;
 for(const key of verifierKeys){if(originalVerifier[key]===undefined)delete process.env[key];else process.env[key]=originalVerifier[key];}}
 console.log('PASS: cron auth, source/SSRF gating, exact variants, conservative pricing, strict schema, no-key/mocked research and signed checkout receipt validation');
+
+assert.equal(canFetchListing('https://www.lg.com/in/laundry/top-loading-washing-machines/t80kmmb3z'),true);
+assert.equal(canFetchListing('https://www.lg.com/us/washers'),false);
+assert.equal(canFetchListing('https://www.whirlpoolindia.com/washing-machines'),true);
+assert.equal(canFetchListing('https://www.lg.com.evil.example/in/'),false);

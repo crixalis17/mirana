@@ -40,3 +40,6 @@ try {
   requests=0;const unique=await readSourcePages([{url:'https://www.rtings.com/same#a'},{url:'https://www.rtings.com/same#b'}]);assert.equal(unique.length,1);assert.equal(requests,1);
   console.log('PASS: original-page reader allowlist, source kinds, untrusted readable text, hidden/script/form removal, entities, metadata, bounded streaming/cancellation, access blockers, timeouts, concurrency, text/quote caps and quote/hash integrity');
 } finally {globalThis.fetch=originalFetch;}
+
+assert.equal(sourcePageKind('https://www.lg.com/in/laundry/top-loading-washing-machines/t80kmmb3z'),'official');
+assert.equal(sourcePageKind('https://www.whirlpoolindia.com/washing-machines'),'official');

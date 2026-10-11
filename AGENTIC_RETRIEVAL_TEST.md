@@ -1,0 +1,15 @@
+# Local agentic retrieval experiment
+
+Run `npm run research:test:retrieval -- --live` for the washing-machine case, or `npm run research:test:retrieval -- --case watch --live` for the original Apple Watch case from this directory with provider credentials saved in ignored `.env.local`. This consumes Gemini and provider credits. Results and incremental query/API receipts are written to `/private/tmp/mirana-agentic-retrieval.json`; each washing-machine run replaces that file. Apple Watch receipts use `/private/tmp/mirana-agentic-watch-retrieval.json` instead. Case fixtures contain the original requirements without known-good product URLs or ASINs. No database, shopping worker, assessment, ranking, recommendation or email stage runs.
+
+The first Gemini 3.8 Flash call produces a schema-validated research plan. The tool-enabled ADK agent then receives the original brief and plan, plus registered tool descriptions and JSON parameter schemas. Gemini chooses query text, tool names and observed listing URLs. ADK validates arguments, executes our external API adapters, and feeds their structured responses into the next Gemini turn. The application retains URL safety, credential handling, deduplication and API transport limits. It does not choose this experiment's queries or provider order.
+
+Six allowed tools: SerpApi India shopping search, Tavily search/extract, Firecrawl search/scrape, and Bright Data listing extraction. Providers without usable configuration are unavailable. Google built-in search is disabled for this experiment so it cannot mask external API failures. No keys are sent in tool arguments or the test report.
+
+Planning uses structured output with a response schema and no tools. Retrieval uses function calls with structured arguments/results and an early stop with factual API receipts; the authoritative receipts come from executed tools, not the model's own summary. `LlmAgent.inputSchema` is for exposing an agent as a tool, not validation of arbitrary Runner user messages.
+
+Both calls use HIGH thinking and a 65,536-token output ceiling. There is no experiment-wide wall-clock timeout. Existing bounds remain: sixteen retrieval model turns for washing machines or twenty-four for Apple Watch, twenty-four executed tool calls (the experiment overrides the normal twelve-call default) and per-provider transport timeouts. These are explicit experiment boundaries, not an unlimited research guarantee. A prompt cannot guarantee correct queries, source identity, prices or requirements; inspect actual inputs, returned listing identities and unresolved evidence before enabling downstream reasoning.
+
+References: [ADK function tools](https://adk.dev/tools-custom/function-tools/), [ADK data handling](https://adk.dev/graphs/data-handling/).
+
+`node --experimental-transform-types tests/agentic-retrieval.test.mjs` checks model-generated query passthrough, tool allowlisting, result feedback and adaptive listing retrieval using mocked providers. It is a plumbing test; the live artifact is needed to assess retrieval quality.
