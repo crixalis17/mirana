@@ -149,7 +149,7 @@ export async function retrieveResearchEvidence(request:ProviderRequest,signal:Ab
     if((!result?.ok||!result.sources.some(source=>sourcePageKind(source.url)!=='unknown'))&&web[alternate].ready)
       await webCall(`search_web_${alternate}`,{query:query.query.slice(0,400)});
   }
-  if(product.serpapi&&!followup)await productCall('search_products_india',{query:`${identity} ${text(brief.requestText).slice(0,160)}`.slice(0,250),limit:8});
+  if(product.serpapi&&!followup)await productCall('search_products_india',{query:`${identity} ${text(brief.requestText)}`.replace(/[\u0000-\u0020]+/g,' ').trim().slice(0,250),limit:8});
   const tokens=identity.toLowerCase().split(/\s+/).filter(v=>v.length>1);
   const stop=new Set('this that with without want need have only whichever prefer maximum complete cost cards offers available should product requirements INR India'.toLowerCase().split(' '));
   const preferenceTokens=[...new Set((text(brief.requestText).toLowerCase().match(/\b[a-z0-9]{3,}\b/g)||[]).filter(word=>!stop.has(word)))];

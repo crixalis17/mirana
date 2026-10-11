@@ -4,7 +4,7 @@ registerHooks({resolve(s,c,next){try{return next(s,c);}catch(error){if(s.startsW
 const {retrieveResearchEvidence,retrievalQueries,extractedListingLinks,clearVariantMismatch}=await import('../lib/research/retrieval.ts');
 const official='https://www.apple.com/in/watch/',amazon='https://www.amazon.in/dp/B0FQG8R2XW',flipkart='https://www.flipkart.com/apple-watch/p/itmfixture?pid=WATCH1234';
 const review='https://www.trustedreviews.com/reviews/apple-watch',owner='https://www.reddit.com/r/AppleWatch/comments/fixture/watch/';
-const brief={brand:'Apple',modelName:'Watch',requestText:'Black GPS only with no cellular, prefer 42 mm or smallest size. Maximum INR 40000, no bank cards.',budget:40000,topN:3,postcode:'600019',productUrl:''};
+const brief={brand:'Apple',modelName:'Watch',requestText:'Black GPS only with no cellular, prefer 42 mm or smallest size.\nMaximum INR 40000, no bank cards.',budget:40000,topN:3,postcode:'600019',productUrl:''};
 const input={context:{brief,referenceDate:'2026-10-10'},plan:{questions:['Only search SE 2']},previousEvidence:[]};
 const queries=retrievalQueries(input).queries;assert.equal(queries.length,5);assert.ok(queries.every(q=>!q.query.includes('SE 2')));assert.ok(!JSON.stringify(queries).includes('Series 11'));
 assert.ok(!queries.find(q=>q.scope==='amazon').query.includes('-cellular'));assert.ok(!queries.find(q=>q.scope==='amazon').query.includes('-bank'));
@@ -41,7 +41,10 @@ const fetcher=async(target,init)=>{
   }else result={};
   return Response.json({jsonrpc:'2.0',id:rpc.id,result},{headers:{'mcp-session-id':'fixture'}});
  }
- if(url.hostname==='serpapi.com')return Response.json({search_metadata:{status:'Success'},shopping_results:[{title:'Apple Watch cellular 46mm',product_link:'https://www.google.co.in/search?prds=wrong',price:'INR 30000'}]});
+ if(url.hostname==='serpapi.com'){
+  assert.ok(!/[\u0000-\u001f]/.test(url.searchParams.get('q')),'Multiline briefs must reach shopping search as a valid single-line query');
+  return Response.json({search_metadata:{status:'Success'},shopping_results:[{title:'Apple Watch cellular 46mm',product_link:'https://www.google.co.in/search?prds=wrong',price:'INR 30000'}]});
+ }
  if(url.hostname==='api.brightdata.com'){
   const requested=JSON.parse(init.body).input[0].url;
   return Response.json([{url:requested,input:{url:requested},title:'Apple Watch GPS black 42mm',currency:'INR',final_price:34999,is_available:true}]);
@@ -56,6 +59,7 @@ assert.equal(models,0);assert.equal(answer.diagnostics.modelCalls,0);assert.equa
 assert.ok(searches.some(q=>q.includes('site:amazon.in')));assert.ok(searches.some(q=>q.includes('site:flipkart.com')));assert.ok(searches.some(q=>q.includes('official')));assert.ok(searches.some(q=>q.includes('review')));assert.ok(searches.some(q=>q.includes('reddit')));
 assert.ok(scrapes.includes(amazon));assert.ok(scrapes.includes(flipkart));assert.equal(scrapes.filter(url=>url===amazon).length,1);
 assert.ok(answer.diagnostics.toolCalls.some(call=>call.tool==='fetch_product_listing'));assert.ok(answer.diagnostics.observations.length>=2);
+assert.ok(answer.diagnostics.toolCalls.some(call=>call.tool==='search_products_india'&&call.status==='ok'),'A multiline user brief must not reject SerpApi before the provider request');
 assert.ok(answer.sources.every(source=>!source.url.includes('google.co.in')));assert.ok(answer.diagnostics.originalSources.some(source=>source.sourceKind==='review'));assert.ok(answer.diagnostics.originalSources.some(source=>source.sourceKind==='owner'));
 assert.equal(reservations.length,answer.diagnostics.toolCalls.length);assert.ok(JSON.parse(answer.text).candidates.every(candidate=>candidate.identityVerified===false));
 const reviewFollowup=await retrieveResearchEvidence({instructions:'',input:{...input,retrievalAllowance:4,previousEvidence:[{sources:[{url:amazon,title:'Apple Watch black GPS 42mm',excerpts:[]},{url:flipkart,title:'Apple Watch black GPS 42mm',excerpts:[]}]}]},search:true},new AbortController().signal,{env,fetch:fetcher});
