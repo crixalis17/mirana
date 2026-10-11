@@ -42,3 +42,13 @@ CREATE TABLE IF NOT EXISTS research_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_research_jobs_runnable ON research_jobs(status,retry_at,lease_expires);
 CREATE INDEX IF NOT EXISTS idx_research_jobs_owner ON research_jobs(user_id,purchase_id);
+CREATE TABLE IF NOT EXISTS research_test_permits (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  owner_email TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_job_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_research_test_pending ON research_test_permits(user_id) WHERE status='pending';

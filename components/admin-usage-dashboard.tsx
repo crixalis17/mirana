@@ -4,12 +4,14 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProviderUsage } from '@/lib/admin/provider-usage';
 import { createAdminUsageTools } from '@/lib/admin/usage-webmcp';
+import { createResearchAllowanceTools } from '@/lib/admin/research-allowance-webmcp';
 
 type UsageSnapshot = {
   providers: ProviderUsage[];
   checkedAt: string;
   cache: { expiresAt: string; refreshAfter: string; cached: boolean };
 };
+type ResearchAllowance={userJobs:number;globalJobs:number;userLimit:number;globalLimit:number;blocked:boolean;testPending:boolean;expiresAt:string|null};
 type ModelContext = {
   registerTool: (tool: ReturnType<typeof createAdminUsageTools>[number], options: { signal: AbortSignal }) => void | Promise<void>;
 };
@@ -36,8 +38,24 @@ export default function AdminUsageDashboard() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
   const [accessDenied, setAccessDenied] = useState(false);
+  const [allowance,setAllowance]=useState<ResearchAllowance|null>(null);
+  const [allowanceBusy,setAllowanceBusy]=useState(false);
+  const [allowanceError,setAllowanceError]=useState('');
   const active = useRef<AbortController | null>(null);
   const mounted = useRef(false);
+
+  const requestAllowance=useCallback(async(grant:boolean)=>{
+    setAllowanceBusy(true);setAllowanceError('');
+    try{
+      const response=await fetch('/api/admin/research-allowance',{method:grant?'POST':'GET',credentials:'same-origin',cache:'no-store',...(grant?{headers:{'Content-Type':'application/json'},body:'{}'}:{})});
+      if(response.status===401||response.status===403){if(mounted.current)setAccessDenied(true);throw new Error('Owner access required.');}
+      if(!response.ok)throw new Error('Allowance unavailable.');
+      const next=await response.json() as ResearchAllowance;
+      if(mounted.current)setAllowance(next);
+      return next;
+    }catch(error){if(mounted.current)setAllowanceError('Research allowance could not be refreshed. Please retry.');throw error;}
+    finally{if(mounted.current)setAllowanceBusy(false);}
+  },[]);
 
   const requestUsage = useCallback(async (refresh: boolean) => {
     active.current?.abort();
@@ -75,21 +93,22 @@ export default function AdminUsageDashboard() {
     // Keep the initial render stable and cancel a Strict Mode/unmount startup.
     queueMicrotask(() => {
       if (!startup.signal.aborted) void requestUsage(false).catch(() => {});
+      if (!startup.signal.aborted) void requestAllowance(false).catch(() => {});
     });
     return () => { startup.abort(); mounted.current = false; active.current?.abort(); };
-  }, [requestUsage]);
+  }, [requestUsage,requestAllowance]);
 
   useEffect(() => {
     if (accessDenied) return;
     const model = (document as Document & { modelContext?: ModelContext }).modelContext;
     if (!model?.registerTool) return;
     const lifecycle = new AbortController();
-    for (const tool of createAdminUsageTools(requestUsage)) {
+    for (const tool of [...createAdminUsageTools(requestUsage),...createResearchAllowanceTools(requestAllowance)]) {
       try { Promise.resolve(model.registerTool(tool, { signal: lifecycle.signal })).catch(() => {}); }
       catch { /* Optional browser support does not affect dashboard access. */ }
     }
     return () => lifecycle.abort();
-  }, [accessDenied, requestUsage]);
+  }, [accessDenied, requestUsage,requestAllowance]);
 
   return <main className="admin-usage-page">
     <Link href="/" className="admin-usage-back">← Back to shopping list</Link>
@@ -102,6 +121,15 @@ export default function AdminUsageDashboard() {
     {accessDenied ? <section className="admin-usage-empty" role="alert"><h2>Owner access required</h2>
       <p>Sign in with the Mirana owner account to view provider usage.</p><Link className="text-link" href="/">Return to sign-in</Link></section>
       : <>
+        <section className="admin-usage-card" aria-label="Research test allowance">
+          <h2>Research test limits</h2>
+          <p>{allowance?`${allowance.userJobs} jobs for your account (limit ${allowance.userLimit}) · ${allowance.globalJobs} globally (limit ${allowance.globalLimit}) in the last 24 hours.`:'Loading research allowance…'}</p>
+          <p>Refresh allows your account one extra test. Public limits and usage history stay intact. Provider credits are not reset; the next research run can incur charges.</p>
+          <button type="button" className="outline-button" disabled={allowanceBusy||!allowance||allowance.testPending||!allowance.blocked}
+            onClick={()=>{void requestAllowance(true).catch(()=>{});}}>{allowanceBusy?'Checking…':allowance?.testPending?'One extra test ready':'Refresh test limit'}</button>
+          <p role="status" aria-live="polite">{allowance?.testPending?`One extra test is available until ${time(allowance.expiresAt)}. Start research from your shopping list.`:allowance&&!allowance.blocked?'Your normal research allowance is available.':''}</p>
+          {allowanceError&&<p role="alert">{allowanceError} <button type="button" className="text-link" disabled={allowanceBusy} onClick={()=>{void requestAllowance(false).catch(()=>{});}}>Retry</button></p>}
+        </section>
         <p className="admin-usage-context">These are provider account totals. They may include usage outside Mirana. A missing balance means the provider has not supplied a usable value.</p>
         <div className="admin-usage-check" role="status" aria-live="polite">
           {busy ? 'Checking connected providers…' : snapshot ? `Last checked ${time(snapshot.checkedAt)}${snapshot.cache.cached ? ' · Cached snapshot' : ''}` : 'No usage snapshot yet.'}

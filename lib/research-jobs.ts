@@ -2,6 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import type {Transaction, InValue} from '@libsql/client';
 import {databaseClient} from './database';
 import {ensureResearchSchema} from './research/schema';
+import {canViewUsage} from './admin/access';
 
 export type ResearchStage = 'plan' | 'gather' | 'read' | 'assess' | 'followup' | 'synthesize' | 'verify' | 'publish';
 export type ResearchJobStatus = 'queued' | 'running' | 'retry_pending' | 'failed' | 'cancelled' | 'superseded' | 'completed';
@@ -112,12 +113,40 @@ export async function ensureResearchJob(purchaseId: string,userId: string) {
       const since=new Date(Date.now()-86400000).toISOString();
       const userLimit=bound('RESEARCH_USER_DAILY_JOB_LIMIT',3,20),globalLimit=bound('RESEARCH_DAILY_JOB_LIMIT',10,100);
       const counts=await tx.execute({sql:'SELECT COUNT(*) AS total,SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END) AS owned FROM research_jobs WHERE created_at>=?',args:[userId,since]});
-      if(Number(counts.rows[0]?.total)>=globalLimit||Number(counts.rows[0]?.owned)>=userLimit)throw new ResearchJobError('The daily research allowance has been reached. Try again tomorrow.','daily_limit');
+      if(Number(counts.rows[0]?.total)>=globalLimit||Number(counts.rows[0]?.owned)>=userLimit){
+        const permit=await tx.execute({sql:"SELECT id FROM research_test_permits WHERE user_id=? AND owner_email=? AND status='pending' AND expires_at>?",args:[userId,(process.env.ADMIN_OWNER_EMAIL||'').toLowerCase(),now()]});
+        if(!permit.rows[0]||stopped(row))throw new ResearchJobError('The daily research allowance has been reached. Try again tomorrow.','daily_limit');
+        // Consume atomically with job creation. Existing jobs above return before
+        // this branch, and rollback preserves the permit if insertion fails.
+        await tx.execute({sql:"UPDATE research_test_permits SET status='used',consumed_job_id=? WHERE id=? AND status='pending'",args:[id,String(permit.rows[0].id)]});
+      }
     }
     const timestamp=now(),payload={purchase:{...canonicalResearchBrief(brief),id:purchaseId,briefRevision},referenceDate:timestamp,outputs:{},journal:[],events:[event('plan','Research queued.')],limits:limits(),attemptedCalls:0,attemptedToolCalls:0,inputTokens:0,outputTokens:0,rounds:0,safeError:null};
     await tx.execute({sql:"UPDATE research_jobs SET status='superseded',lease_token=NULL,lease_expires=0,updated_at=? WHERE purchase_id=? AND user_id=? AND status NOT IN ('completed','cancelled','superseded')",args:[timestamp,purchaseId,userId]});
     await tx.execute({sql:'INSERT OR IGNORE INTO research_jobs (id,purchase_id,user_id,brief_revision,brief_hash,status,stage,payload,lease_token,lease_expires,retry_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',args:[id,purchaseId,userId,briefRevision,briefHash,stopped(row)?'cancelled':'queued','plan',JSON.stringify(payload),null,0,null,timestamp,timestamp]});
     return (await find(tx,id))!;
+  });
+}
+
+/** Owner-only one-job allowance; never resets usage or public quota settings. */
+export async function researchTestAllowance(identity: unknown, grant = false) {
+  if(!canViewUsage(identity))throw new ResearchJobError('Owner access required.','access_denied');
+  const owner=identity as {id:string;email:string};
+  return transaction(async tx=>{
+    const timestamp=now(),since=new Date(Date.now()-86400000).toISOString();
+    const counts=await tx.execute({sql:'SELECT COUNT(*) AS total,SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END) AS owned FROM research_jobs WHERE created_at>=?',args:[owner.id,since]});
+    const userJobs=Number(counts.rows[0]?.owned||0),globalJobs=Number(counts.rows[0]?.total||0);
+    const userLimit=bound('RESEARCH_USER_DAILY_JOB_LIMIT',3,20),globalLimit=bound('RESEARCH_DAILY_JOB_LIMIT',10,100);
+    const blocked=userJobs>=userLimit||globalJobs>=globalLimit;
+    await tx.execute({sql:"UPDATE research_test_permits SET status='expired' WHERE user_id=? AND status='pending' AND (expires_at<=? OR owner_email<>?)",args:[owner.id,timestamp,owner.email.toLowerCase()]});
+    const permit=(await tx.execute({sql:"SELECT id,expires_at FROM research_test_permits WHERE user_id=? AND status='pending'",args:[owner.id]})).rows[0];
+    let expiresAt=permit?String(permit.expires_at):null;
+    if(grant&&blocked&&!expiresAt){
+      const expires=new Date(Date.now()+86400000).toISOString();
+      await tx.execute({sql:"INSERT INTO research_test_permits (id,user_id,owner_email,status,created_at,expires_at) VALUES (?,?,?,'pending',?,?)",args:[randomUUID(),owner.id,owner.email.toLowerCase(),timestamp,expires]});
+      expiresAt=expires;
+    }
+    return {userJobs,globalJobs,userLimit,globalLimit,blocked,testPending:!!expiresAt,expiresAt};
   });
 }
 export async function getResearchJob(purchaseId: string,userId: string) {
