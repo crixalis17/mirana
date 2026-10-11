@@ -2,6 +2,7 @@
 // Provider/schema envelopes are validated at runtime before consumption.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
+import {researchRetrievalMode} from './retrieval-mode';
 export type ResearchUsage = { provider: 'openai' | 'vertex'; model: string; inputTokens: number; outputTokens: number; thinkingTokens: number; searchQueries: number };
 export type GroundedSource = { url: string; title: string; excerpts: string[] };
 export type ProviderAnswer = { text: string; sources: GroundedSource[]; searched: boolean; usage: ResearchUsage; diagnostics?:import('./tool-agent').ToolAgentDiagnostics };
@@ -87,7 +88,12 @@ export async function researchProviderRequest(request: ProviderRequest, signal: 
   const provider = (process.env.RESEARCH_PROVIDER || 'openai') as 'openai' | 'vertex';
   if(provider==='vertex'&&process.env.RESEARCH_TOOLS_ENABLED==='true'){
     if(request.search){
-      if(process.env.RESEARCH_RETRIEVAL_MODE!=='agent'){
+      const mode=researchRetrievalMode();
+      if(mode==='gemini-directed'){
+        const {retrieveDirectedEvidence}=await import('./directed-retrieval');
+        return retrieveDirectedEvidence(request,signal);
+      }
+      if(mode==='controlled'){
         const {retrieveResearchEvidence}=await import('./retrieval');
         return retrieveResearchEvidence(request,signal);
       }

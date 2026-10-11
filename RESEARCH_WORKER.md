@@ -99,3 +99,8 @@ With `RESEARCH_PROVIDER=vertex` and `RESEARCH_TOOLS_ENABLED=true`, discovery/fol
 ## Current release configuration
 
 Production activation was approved on 10 October 2026 for signed-in users. The shared job store limits new research to 3 jobs per user and 10 jobs globally per rolling 24 hours by default. Deal checks run daily at approximately 10 AM IST. Optional fields are not prerequisites for research; a missing postcode still means postcode delivery cannot be verified for an email. The production runtime requires `RESEARCH_PRODUCTION_ENABLED=true`. See RELEASE_VERIFICATION.md for actual deployment/test results.
+
+
+### Gemini-directed production retrieval
+
+Set `RESEARCH_RETRIEVAL_MODE=gemini-directed` to route production gather/follow-up through the retrieval-only ADK adapter tested by the local harness. Gemini 3.8 Flash constructs queries from the plan/brief, selects registered external tools and reads their responses adaptively. Comparisons require separate family discovery and exact listing coverage before deep reviews. Built-in Google Search remains the gated last resort. Tool receipts and original/provider snapshots feed the existing read/assess/verify pipeline; the retrieval agent does not select a winner. Durable job limits remain authoritative; each retrieval invocation currently permits three tool-calling model turns (four-call boundary, no extra summary), up to the remaining 24 external operations. No quotas, provider balances or generation ceilings are increased by activation. Existing completed reports are not rerun automatically. The owner-only allowance endpoint/dashboard reports the active runtime mode, and worker stage logs include the allowlisted mode. Unknown mode values fail instead of silently selecting the old path.

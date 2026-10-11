@@ -7,6 +7,7 @@ import type { ProviderRequest } from './research/provider';
 import {recordResearchUsage} from './research-jobs';
 import {stageOutputTokens,finalOutputReserve} from './research/output-budget';
 import { logResearchEvent, safeResearchErrorCode } from './research/logs';
+import {researchRetrievalMode} from './research/retrieval-mode';
 export { cronAuthorized } from './research/cron-auth';
 export const workerConfigured = researchProviderConfigured;
 const billableStages = new Set(['plan', 'gather', 'assess', 'followup', 'synthesize']);
@@ -46,7 +47,8 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
         return { status: 'completed', steps };
       }
       const finalizeWithoutModel=stage==='synthesize' && job.attemptedCalls>=job.limits.maxCalls && !!job.outputs.assess?.claimLedger;
-      const controlledRetrieval=['gather','followup'].includes(stage)&&process.env.RESEARCH_PROVIDER==='vertex'&&process.env.RESEARCH_TOOLS_ENABLED==='true'&&process.env.RESEARCH_RETRIEVAL_MODE!=='agent';
+      const retrievalMode=researchRetrievalMode();
+      const controlledRetrieval=['gather','followup'].includes(stage)&&process.env.RESEARCH_PROVIDER==='vertex'&&process.env.RESEARCH_TOOLS_ENABLED==='true'&&retrievalMode==='controlled';
       const billable = billableStages.has(stage) && !finalizeWithoutModel && !controlledRetrieval;
       if (Date.now() + (billable ? stepTimeout() + 10000 : 50000) > deadline) break;
       const observations = await db().prepare('SELECT payload FROM observations WHERE purchase_id=?').bind(job.purchaseId).all();
@@ -82,7 +84,7 @@ export async function runResearchJob(jobId: string, options: JobOptions = {}, ru
         job = await reserveResearchCall(jobId, token, { maxOutputTokens: stageOutputTokens(stage) });
       }
       const started = Date.now();
-      logResearchEvent({jobId,event:'started',stage,attempt:job.attemptedCalls,round:job.rounds,maxCalls:job.limits.maxCalls,maxRounds:job.limits.maxRounds});
+      logResearchEvent({jobId,event:'started',stage,attempt:job.attemptedCalls,round:job.rounds,maxCalls:job.limits.maxCalls,maxRounds:job.limits.maxRounds,retrievalMode});
       const result = await runner(stage, input, AbortSignal.timeout(Math.min(stepTimeout(), Math.max(1000, deadline - Date.now() - 5000))));
       await assertResearchJobCurrent(jobId, token);
       let next = result.nextStage;

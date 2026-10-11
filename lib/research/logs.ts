@@ -10,6 +10,7 @@ const genericCodes = new Set(['RATE_LIMIT','PROVIDER_UNAVAILABLE','PROVIDER_REJE
 const networkCodes = new Set(['ECONNRESET','ECONNREFUSED','ENOTFOUND','EAI_AGAIN','EHOSTUNREACH','ENETUNREACH','UND_ERR_SOCKET']);
 const timeoutCodes = new Set(['ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT']);
 export type ResearchLogFields = {
+  retrievalMode?:'controlled'|'agent'|'gemini-directed';
   event: typeof events[number]; jobId?: string; stage?: typeof stages[number]; attempt?: number; elapsedMs?: number;
   round?: number; maxCalls?: number; maxRounds?: number; sourceCount?: number; factCount?: number; gapCount?: number;
   candidateCount?: number; retainedCount?: number; inputTokens?: number; outputTokens?: number; thinkingTokens?: number;
@@ -65,6 +66,7 @@ export function logResearchEvent(fields: ResearchLogFields): SafeLog | null {
     }
     if (typeof input.statusCode === 'number' && Number.isInteger(input.statusCode) && input.statusCode >= 100 && input.statusCode <= 599) log.statusCode = input.statusCode;
     if (input.provider === 'openai' || input.provider === 'vertex') log.provider = input.provider;
+    if(input.retrievalMode==='controlled'||input.retrievalMode==='agent'||input.retrievalMode==='gemini-directed')log.retrievalMode=input.retrievalMode;
     if(typeof input.toolProvider==='string'&&(toolProviders as readonly string[]).includes(input.toolProvider))log.toolProvider=input.toolProvider;
     if(typeof input.tool==='string'&&(toolNames as readonly string[]).includes(input.tool))log.tool=input.tool;
     // Keep configured model names, never arbitrary strings, email addresses, query parameters or keys.
