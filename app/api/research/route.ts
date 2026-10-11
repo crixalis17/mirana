@@ -3,6 +3,7 @@ import { user } from '@/lib/auth';
 import { body, db } from '@/lib/store';
 import { runWorker, workerConfigured } from '@/lib/worker';
 import { ensureResearchJob, getResearchJob, researchJobDTO, cancelResearchJob, retryResearchJob, ResearchJobError } from '@/lib/research-jobs';
+import { researchRequestError } from '@/lib/research/request-error';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -35,7 +36,11 @@ export async function POST(request: Request) {
     const job = await ensureResearchJob(data.purchaseId, identity.id);
     if (['queued','running','retry_pending'].includes(job.status)) wake(data.purchaseId, identity.id);
     return Response.json({ status: job.status, job: researchJobDTO(job) }, { status: 202, headers: noCache });
-  } catch { return Response.json({ error: 'Research request could not be queued. Check the local database migration.' }, { status: 400 }); }
+  } catch (error) {
+    const failure = researchRequestError(error);
+    console.error('Research queue request failed', { code: failure.logCode });
+    return Response.json(failure.body, { status: failure.status, headers: noCache });
+  }
 }
 export async function PATCH(request: Request) {
   const identity = await user(request);

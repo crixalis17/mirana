@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { researchRequestError } from '../lib/research/request-error.ts';
+const quota = researchRequestError({ code: 'daily_limit', message: 'private details' });
+assert.equal(quota.status, 429);
+assert.equal(quota.body.code, 'daily_limit');
+assert.match(quota.body.error, /rolling 24-hour/);
+const failure = researchRequestError({code:'SQLITE_BUSY',message:'secret SQL or token'});
+assert.equal(failure.status,503);
+assert.equal(failure.logCode,'SQLITE_BUSY');
+assert.ok(!JSON.stringify(failure).includes('secret'));
+assert.equal(researchRequestError({code:'secret-url?token=abc'}).logCode,'queue_unavailable');
+assert.equal(researchRequestError(null).status,503);
+console.log('Research request error tests passed');
