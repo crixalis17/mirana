@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createClient} from '@libsql/client';
 registerHooks({resolve(specifier,context,next){try{return next(specifier,context);}catch(error){if(specifier.startsWith('.'))return next(`${specifier}.ts`,context);throw error;}}});
 const directory=await mkdtemp(join(tmpdir(),'mirana-research-jobs-'));
-const keys=['TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','NODE_ENV','RESEARCH_MAX_CALLS','RESEARCH_MAX_TOOL_CALLS','RESEARCH_MAX_ROUNDS','RESEARCH_MAX_INPUT_TOKENS','RESEARCH_MAX_OUTPUT_TOKENS','RESEARCH_USER_DAILY_JOB_LIMIT','RESEARCH_DAILY_JOB_LIMIT','RESEARCH_RETRY_JOB_ID','RESEARCH_RETRY_OUTPUT_BUDGET'];
+const keys=['RESEARCH_RETRIEVAL_MODE','TURSO_DATABASE_URL','TURSO_AUTH_TOKEN','NODE_ENV','RESEARCH_MAX_CALLS','RESEARCH_MAX_TOOL_CALLS','RESEARCH_MAX_ROUNDS','RESEARCH_MAX_INPUT_TOKENS','RESEARCH_MAX_OUTPUT_TOKENS','RESEARCH_USER_DAILY_JOB_LIMIT','RESEARCH_DAILY_JOB_LIMIT','RESEARCH_RETRY_JOB_ID','RESEARCH_RETRY_OUTPUT_BUDGET'];
 const saved=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
 let client;
 try {
@@ -157,5 +157,14 @@ try {
   assert.equal(extensionLease.job.limits.maxOutputTokens,131072);
   assert.equal(extensionLease.job.attemptedCalls,1);assert.equal(extensionLease.job.outputTokens,12);assert.equal(extensionLease.job.inputTokens,11);
   delete process.env.RESEARCH_RETRY_JOB_ID;delete process.env.RESEARCH_RETRY_OUTPUT_BUDGET;
+  process.env.RESEARCH_RETRIEVAL_MODE='gemini-directed';
+  delete process.env.RESEARCH_MAX_CALLS;delete process.env.RESEARCH_MAX_INPUT_TOKENS;delete process.env.RESEARCH_MAX_OUTPUT_TOKENS;
+  await insert('long-directed-harness');const directedJob=await jobs.ensureResearchJob('long-directed-harness','owner');
+  assert.equal(directedJob.limits.maxCalls,64);assert.equal(directedJob.limits.maxInputTokens,8000000);assert.equal(directedJob.limits.maxOutputTokens,4194304);
+  const directedLease=await jobs.claimResearchJob(directedJob.id);
+  for(let n=0;n<12;n++)await jobs.reserveResearchCall(directedJob.id,directedLease.token,{maxOutputTokens:65536,reserveCalls:2});
+  const resumedDirected=await jobs.assertResearchJobCurrent(directedJob.id,directedLease.token);assert.equal(resumedDirected.attemptedCalls,12);
+  assert.equal((await jobs.getResearchJob('model-reserve','owner')).limits.maxCalls,8,'Existing job limits must not be silently expanded');
+  console.log('PASS: longer directed harness persists new limits, permits more than eight generations, and preserves old job budgets');
   console.log('PASS: durable bounded jobs, tool/model attempt budgets across retries, legacy defaults and hard cap, final-call reserve, ownership, checkpoint journals, input checks and lease/cancellation fencing');
 } finally {client?.close();await rm(directory,{recursive:true,force:true});for(const [key,value] of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

@@ -2,6 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import type {Transaction, InValue} from '@libsql/client';
 import {databaseClient} from './database';
 import {ensureResearchSchema} from './research/schema';
+import {RETRIEVAL_HARNESS} from './research/retrieval-harness';
 import {canViewUsage} from './admin/access';
 
 export type ResearchStage = 'plan' | 'gather' | 'read' | 'assess' | 'followup' | 'synthesize' | 'verify' | 'publish';
@@ -22,7 +23,13 @@ export function canonicalResearchBrief(brief: RecordValue) {
 export function researchBriefHash(brief: RecordValue) {return createHash('sha256').update(JSON.stringify(canonicalResearchBrief(brief))).digest('hex');}
 function revision(brief: RecordValue) {return typeof brief.briefRevision==='number' && Number.isSafeInteger(brief.briefRevision) && brief.briefRevision >= 0 ? brief.briefRevision : 0;}
 function bound(name: string, fallback: number, maximum: number) {const value=Number(process.env[name]); return Number.isInteger(value)&&value>0 ? Math.min(value,maximum) : fallback;}
-function limits() {return {maxCalls:bound('RESEARCH_MAX_CALLS',8,8),maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',process.env.RESEARCH_RETRIEVAL_MODE==='agent'?12:24,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',100000,200000),maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',process.env.RESEARCH_TOOLS_ENABLED==='true'?196608:24000,196608)};}
+export function researchJobLimits() {
+  const directed=process.env.RESEARCH_RETRIEVAL_MODE==='gemini-directed';
+  return {maxCalls:bound('RESEARCH_MAX_CALLS',directed?RETRIEVAL_HARNESS.jobModelCalls:8,directed?RETRIEVAL_HARNESS.jobModelCalls:8),
+    maxToolCalls:bound('RESEARCH_MAX_TOOL_CALLS',process.env.RESEARCH_RETRIEVAL_MODE==='agent'?12:24,24),maxRounds:bound('RESEARCH_MAX_ROUNDS',2,2),
+    maxInputTokens:bound('RESEARCH_MAX_INPUT_TOKENS',directed?RETRIEVAL_HARNESS.jobInputTokens:100000,directed?RETRIEVAL_HARNESS.jobInputTokens:200000),
+    maxOutputTokens:bound('RESEARCH_MAX_OUTPUT_TOKENS',directed?RETRIEVAL_HARNESS.jobOutputTokens:process.env.RESEARCH_TOOLS_ENABLED==='true'?196608:24000,directed?RETRIEVAL_HARNESS.jobOutputTokens:196608)};
+}
 const leaseMs=360000;
 const now=()=>new Date().toISOString();
 function event(stage: ResearchStage, message: string) {return {id:randomUUID(),at:now(),stage,message};}
@@ -121,7 +128,7 @@ export async function ensureResearchJob(purchaseId: string,userId: string) {
         await tx.execute({sql:"UPDATE research_test_permits SET status='used',consumed_job_id=? WHERE id=? AND status='pending'",args:[id,String(permit.rows[0].id)]});
       }
     }
-    const timestamp=now(),payload={purchase:{...canonicalResearchBrief(brief),id:purchaseId,briefRevision},referenceDate:timestamp,outputs:{},journal:[],events:[event('plan','Research queued.')],limits:limits(),attemptedCalls:0,attemptedToolCalls:0,inputTokens:0,outputTokens:0,rounds:0,safeError:null};
+    const timestamp=now(),payload={purchase:{...canonicalResearchBrief(brief),id:purchaseId,briefRevision},referenceDate:timestamp,outputs:{},journal:[],events:[event('plan','Research queued.')],limits:researchJobLimits(),attemptedCalls:0,attemptedToolCalls:0,inputTokens:0,outputTokens:0,rounds:0,safeError:null};
     await tx.execute({sql:"UPDATE research_jobs SET status='superseded',lease_token=NULL,lease_expires=0,updated_at=? WHERE purchase_id=? AND user_id=? AND status NOT IN ('completed','cancelled','superseded')",args:[timestamp,purchaseId,userId]});
     await tx.execute({sql:'INSERT OR IGNORE INTO research_jobs (id,purchase_id,user_id,brief_revision,brief_hash,status,stage,payload,lease_token,lease_expires,retry_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',args:[id,purchaseId,userId,briefRevision,briefHash,stopped(row)?'cancelled':'queued','plan',JSON.stringify(payload),null,0,null,timestamp,timestamp]});
     return (await find(tx,id))!;

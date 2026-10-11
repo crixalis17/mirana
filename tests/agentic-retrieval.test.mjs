@@ -33,7 +33,7 @@ const script=readFileSync(new URL('../scripts/agentic-retrieval-test.mjs',import
 for(const forbidden of ['runResearchStage','research-worker','db.ts','sendEmail'])assert.ok(!script.includes(forbidden));
 console.log('PASS: model-generated query reaches API unchanged, ADK returns API responses to Gemini, adaptive listing fetch, tool allowlist, retrieval experiment excludes downstream stages.');
 let retrievalTurns=0;const receipts=[];
-const stopped=await researchToolAgentRequest({search:true,instructions:'Retrieve only.',input:{researchPlan:{hardRequirements:['8kg top load']}}},new AbortController().signal,{env,allowedTools:['search_products_india'],retrievalOnly:true,maxSteps:2,onToolOutput:(tool,output)=>receipts.push({tool,output}),fetch:async(target)=>{
+const stopped=await researchToolAgentRequest({search:true,instructions:'Retrieve only.',input:{researchPlan:{hardRequirements:['8kg top load']}}},new AbortController().signal,{env,allowedTools:['search_products_india'],retrievalOnly:true,maxSteps:2,maxToolCalls:1,onToolOutput:(tool,output)=>receipts.push({tool,output}),fetch:async(target)=>{
  if(new URL(target).hostname==='aiplatform.googleapis.com'){retrievalTurns++;return response([call('search_products_india',{query,limit:2})]);}
  return Response.json({search_metadata:{status:'Success'},shopping_results:[{title:'Fixture 8kg top load',link:url,extracted_price:21000,price:'₹21000'}]});
 }});

@@ -1,7 +1,7 @@
 import {user} from '@/lib/auth';
 import {canViewUsage,privateUsageHeaders} from '@/lib/admin/access';
 import {guard} from '@/lib/origin';
-import {researchTestAllowance} from '@/lib/research-jobs';
+import {researchTestAllowance,researchJobLimits} from '@/lib/research-jobs';
 import {researchRetrievalMode} from '@/lib/research/retrieval-mode';
 
 export const runtime='nodejs';
@@ -18,7 +18,7 @@ async function allowance(request:Request,grant:boolean){
       const input=JSON.parse(raw);if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length)throw new Error();
     }catch{return Response.json({error:'Send an empty JSON object.'},{status:400,headers:privateUsageHeaders});}
   }
-  try{return Response.json({...await researchTestAllowance(identity,grant),retrievalMode:researchRetrievalMode()},{headers:privateUsageHeaders});}
+  try{return Response.json({...await researchTestAllowance(identity,grant),retrievalMode:researchRetrievalMode(),newJobLimits:researchJobLimits()},{headers:privateUsageHeaders});}
   catch{return Response.json({error:'Research allowance could not be refreshed.'},{status:503,headers:privateUsageHeaders});}
 }
 export const GET=(request:Request)=>allowance(request,false);

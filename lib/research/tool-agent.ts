@@ -260,7 +260,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
         }
         // Reserve the final generation for a summary without another paid tool
         // dispatch. The durable job budget remains the authority on each call.
-        if(diagnostics.modelCalls===steps-1||executions>=toolCallLimit){
+        if((!options.retrievalOnly&&diagnostics.modelCalls===steps-1)||executions>=toolCallLimit){
           // Removing declarations alone lets Gemini replay earlier function calls.
           // Keep function schemas but explicitly disable function calling for this
           // final text turn; no further provider dispatch is permitted.
@@ -295,7 +295,7 @@ export async function researchToolAgentRequest(request:ProviderRequest,signal:Ab
     let finalText='',finished=false;
     for await(const event of runIsolatedAdk(agent,request.input,signal,steps)){
       if(event.errorCode)throw new ResearchProviderError('Research returned an unusable answer.','INVALID_OUTPUT');
-      if(options.retrievalOnly&&(diagnostics.modelCalls>=steps-1||executions>=toolCallLimit)&&event.content?.parts?.some(part=>part.functionResponse))break;
+      if(options.retrievalOnly&&(diagnostics.modelCalls>=(options.retrievalOnly?steps:steps-1)||executions>=toolCallLimit)&&event.content?.parts?.some(part=>part.functionResponse))break;
       if(isFinalResponse(event)){
         finalText=(event.content?.parts||[]).filter(part=>!part.thought&&typeof part.text==='string').map(part=>part.text).join('\n');
         finished=event.finishReason==='STOP';

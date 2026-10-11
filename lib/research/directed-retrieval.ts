@@ -1,3 +1,4 @@
+import {RETRIEVAL_HARNESS} from './retrieval-harness';
 import type {ProviderRequest,ProviderAnswer} from './provider';
 import {researchToolAgentRequest,type ToolAgentOptions} from './tool-agent';
 
@@ -12,8 +13,8 @@ export async function retrieveDirectedEvidence(request:ProviderRequest,signal:Ab
   const remaining=Number(request.input.retrievalAllowance);
   const maxToolCalls=Number.isSafeInteger(remaining)?Math.max(1,Math.min(24,remaining)):24;
   const answer=await researchToolAgentRequest({...request,instructions:`${request.instructions}\n${DIRECTED_RETRIEVAL_INSTRUCTIONS}`},signal,{
-    ...options,retrievalOnly:true,maxSteps:4,maxToolCalls,
-    maxOutputTokens:65536,
+    ...options,retrievalOnly:true,maxSteps:RETRIEVAL_HARNESS.modelTurns,maxToolCalls,
+    maxOutputTokens:RETRIEVAL_HARNESS.outputTokens,
     allowedTools:['search_web_firecrawl','search_web_tavily','search_products_india','read_source_firecrawl','read_source_tavily','fetch_product_listing','read_source_page','google_search'],
     beforeModelCall:request.beforeModelCall,beforeToolCall:request.beforeToolCall,onModelUsage:request.onModelUsage,
   });

@@ -11,7 +11,7 @@ type UsageSnapshot = {
   checkedAt: string;
   cache: { expiresAt: string; refreshAfter: string; cached: boolean };
 };
-type ResearchAllowance={userJobs:number;globalJobs:number;userLimit:number;globalLimit:number;blocked:boolean;testPending:boolean;expiresAt:string|null;retrievalMode?:string};
+type ResearchAllowance={userJobs:number;globalJobs:number;userLimit:number;globalLimit:number;blocked:boolean;testPending:boolean;expiresAt:string|null;retrievalMode?:string;newJobLimits?:{maxCalls:number;maxToolCalls:number}};
 type ModelContext = {
   registerTool: (tool: ReturnType<typeof createAdminUsageTools>[number], options: { signal: AbortSignal }) => void | Promise<void>;
 };
@@ -123,7 +123,7 @@ export default function AdminUsageDashboard() {
       : <>
         <section className="admin-usage-card" aria-label="Research test allowance">
           <h2>Research test limits</h2>
-          {allowance?.retrievalMode&&<p>Active retrieval: {allowance.retrievalMode}</p>}
+          {allowance?.retrievalMode&&<p>Active retrieval: {allowance.retrievalMode}{allowance.newJobLimits?` · New jobs: up to ${allowance.newJobLimits.maxCalls} model calls / ${allowance.newJobLimits.maxToolCalls} external operations`:""}</p>}
           <p>{allowance?`${allowance.userJobs} jobs for your account (limit ${allowance.userLimit}) · ${allowance.globalJobs} globally (limit ${allowance.globalLimit}) in the last 24 hours.`:'Loading research allowance…'}</p>
           <p>Refresh allows your account one extra test. Public limits and usage history stay intact. Provider credits are not reset; the next research run can incur charges.</p>
           <button type="button" className="outline-button" disabled={allowanceBusy||!allowance||allowance.testPending||!allowance.blocked}
